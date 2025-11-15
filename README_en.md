@@ -152,7 +152,7 @@ Dependencies (via Composer):
 2. **Install PHP dependencies**
 
    ```bash
-   composer require firebase/php-jwt
+   composer install --no-dev --optimize-autoloader
    ```
 
    Ensure `vendor/autoload.php` exists and is readable by PHP.
@@ -200,11 +200,72 @@ Dependencies (via Composer):
    * `last_error_message` is empty.
    * `pending_update_count` looks reasonable.
 
+### Docker Compose quick start
+
+Perfect for Ubuntu / Debian servers. Make sure [Docker Engine](https://docs.docker.com/engine/install/) and the `docker compose` plugin are installed.
+
+1. **Install Docker (if needed)**
+
+   ```bash
+   sudo apt update
+   sudo apt install -y docker.io docker-compose-plugin
+   sudo systemctl enable --now docker
+   ```
+
+2. **Clone the repo and edit environment variables**
+
+   ```bash
+   git clone <your-repo-url> relaycat
+   cd relaycat
+   $EDITOR docker-compose.yml   # update every RELAYCAT_* value
+   ```
+
+   Environment variables defined in `docker-compose.yml` override the defaults inside `config.php` (see “Environment variables / Docker” below).
+
+3. **Build and start the stack**
+
+   ```bash
+   docker compose build --pull
+   docker compose up -d
+   docker compose logs -f relaycat
+   ```
+
+   By default port `8080` on the host maps to `80` inside the container—tweak the `ports` section if necessary.
+
+4. **Put HTTPS in front**
+
+   Terminate TLS on the host or a reverse proxy (Nginx, Caddy, Traefik, …) and forward `https://yourdomain.com` to `http://127.0.0.1:8080`. Add `X-Forwarded-*` headers if your proxy supports them.
+
+5. **Set the Telegram webhook**
+
+   Once `https://yourdomain.com/webhook.php` is reachable from the internet, run the `setWebhook` command from step 6 and keep the `secret_token` identical to `RELAYCAT_TG_WEBHOOK_SECRET`.
+
+6. **Persist your data**
+
+   Docker Compose binds `/var/lib/relaycat` to the named volume `relaycat-data`. Back it up or migrate it via `docker run --rm -v relaycat-data:/data busybox ls -al /data`.
+
 ---
 
 ## Configuration
 
 All main options live in `config.php`. The important ones:
+
+### Environment variables / Docker
+
+Any environment variable starting with `RELAYCAT_` overrides its matching constant in `config.php`. This is what the Docker image (and `docker-compose.yml`) relies on. Common mappings:
+
+| Environment variable | Constant | Purpose |
+| --- | --- | --- |
+| `RELAYCAT_BOT_TOKEN` | `BOT_TOKEN` | Telegram Bot Token |
+| `RELAYCAT_BOT_USERNAME` | `BOT_USERNAME` | Bot username without `@` |
+| `RELAYCAT_ADMIN_ID` | `ADMIN_ID` | Admin Telegram numeric ID |
+| `RELAYCAT_TG_WEBHOOK_SECRET` | `TG_WEBHOOK_SECRET` | Webhook secret token |
+| `RELAYCAT_SHARED_JWT_SECRET` | `SHARED_JWT_SECRET` | JWT signing secret |
+| `RELAYCAT_RECAPTCHA_SITE_KEY` / `SECRET_KEY` | same | Google reCAPTCHA keys |
+| `RELAYCAT_VERIFY_URL` | `VERIFY_URL` | Public URL of `verify.php` |
+| `RELAYCAT_DATA_DIR` | `DATA_DIR` | Directory for JSON / state files (defaults to `/var/lib/relaycat` in the container) |
+
+Additional knobs (rate limiting, bad words, etc.) also expose `RELAYCAT_...` variables—search inside `config.php` for the full list.
 
 ### Telegram & webhook
 
