@@ -160,7 +160,7 @@
 2. **安装 PHP 依赖**
 
    ```bash
-   composer require firebase/php-jwt
+   composer install --no-dev --optimize-autoloader
    ```
 
 3. **准备数据目录**
@@ -206,11 +206,73 @@
    * `last_error_message` 为空；
    * `pending_update_count` 不异常。
 
+### 使用 Docker Compose 快速部署
+
+适用于 Ubuntu / Debian 等服务器，确保已安装 [Docker Engine](https://docs.docker.com/engine/install/) 和 `docker compose` 插件。
+
+1. **安装 Docker（如未安装）**
+
+   ```bash
+   sudo apt update
+   sudo apt install -y docker.io docker-compose-plugin
+   sudo systemctl enable --now docker
+   ```
+
+2. **克隆仓库并调整环境变量**
+
+   ```bash
+   git clone <your-repo-url> relaycat
+   cd relaycat
+   $EDITOR docker-compose.yml   # 把 RELAYCAT_* 环境变量改成真实值
+   ```
+
+   `docker-compose.yml` 中的 `RELAYCAT_...` 变量会直接写入容器的环境，覆盖 `config.php` 中的默认值（见下文“环境变量 / Docker”）。
+
+3. **构建镜像并启动**
+
+   ```bash
+   docker compose build --pull
+   docker compose up -d
+   docker compose logs -f relaycat   # 查看启动日志
+   ```
+
+   默认映射 `8080:80`，可根据需要修改 `docker-compose.yml` 中的 `ports`。
+
+4. **配置 HTTPS 入口**
+
+   * 推荐在宿主机或前置反向代理（Nginx、Caddy、Traefik 等）上申请证书，并将 `https://yourdomain.com` 反代到 `http://127.0.0.1:8080`。
+   * 记得在反向代理处新增 `X-Forwarded-Proto` 等头，以便未来扩展。
+
+5. **设置 Telegram Webhook**
+
+   当 `https://yourdomain.com/webhook.php` 可被公网访问后，执行第 6 步的 `setWebhook` 命令，并确保 `secret_token` 与 `RELAYCAT_TG_WEBHOOK_SECRET` 保持一致。
+
+6. **持久化数据**
+
+   Docker Compose 会自动将 `/var/lib/relaycat` 挂载到名为 `relaycat-data` 的卷，可通过 `docker volume inspect relaycat-data` 查看真实路径，用于备份或迁移。
+
 ---
 
 ## 配置说明
 
 以下仅列关键配置，完整参数请直接参考 `config.php`。
+
+### 环境变量 / Docker
+
+所有以 `RELAYCAT_` 开头的环境变量都会覆盖 `config.php` 中对应的默认值，适用于 Docker、Kubernetes 或其他无状态部署场景。常用映射如下：
+
+| 环境变量 | 对应常量 | 作用 |
+| --- | --- | --- |
+| `RELAYCAT_BOT_TOKEN` | `BOT_TOKEN` | Telegram Bot Token |
+| `RELAYCAT_BOT_USERNAME` | `BOT_USERNAME` | Bot 用户名（不带 `@`） |
+| `RELAYCAT_ADMIN_ID` | `ADMIN_ID` | 管理员 Telegram 数字 ID |
+| `RELAYCAT_TG_WEBHOOK_SECRET` | `TG_WEBHOOK_SECRET` | Webhook Secret Token |
+| `RELAYCAT_SHARED_JWT_SECRET` | `SHARED_JWT_SECRET` | JWT 签名密钥 |
+| `RELAYCAT_RECAPTCHA_SITE_KEY` / `SECRET_KEY` | 同名常量 | Google reCAPTCHA 配置 |
+| `RELAYCAT_VERIFY_URL` | `VERIFY_URL` | 公网可访问的 `verify.php` 地址 |
+| `RELAYCAT_DATA_DIR` | `DATA_DIR` | JSON / 状态文件目录（Docker 镜像内默认为 `/var/lib/relaycat`） |
+
+其余限流、屏蔽词等也有对应变量，可在 `config.php` 中搜索 `RELAYCAT_` 关键字。
 
 ### Telegram / Webhook
 
