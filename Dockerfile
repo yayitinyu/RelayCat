@@ -25,7 +25,7 @@ ENV RELAYCAT_DATA_DIR=/var/lib/relaycat \
 
 # Apache tweaks: honor document root env and disable default index
 RUN set -eux; \
-    sed -ri 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/000-default.conf /etc/apache2/apache2.conf; \
+    sed -ri "s!/var/www/html!${APACHE_DOCUMENT_ROOT}!g" /etc/apache2/sites-available/000-default.conf /etc/apache2/apache2.conf; \
     a2enmod rewrite headers expires
 
 # Copy app source
