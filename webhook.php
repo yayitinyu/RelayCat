@@ -134,7 +134,7 @@ function tg_api(string $method, array $params): array {
     ]);
     $resp = curl_exec($ch);
     $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    // curl_close($ch);
 
     if ($resp === false || $http !== 200) {
         error_log("[WEBHOOK] API {$method} failed HTTP={$http}, resp=" . substr((string)$resp, 0, 500));
