@@ -83,6 +83,30 @@ async def delete_rule(request: Request, rule_id: int = Form(...), user=Depends(g
         await session.commit()
     return RedirectResponse("/rules", status_code=303)
 
+@router.post("/rules/toggle")
+async def toggle_rule(request: Request, rule_id: int = Form(...), user=Depends(get_current_user)):
+    if not user: return RedirectResponse("/login", status_code=303)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Rule).where(Rule.id == rule_id))
+        rule = result.scalar_one_or_none()
+        if rule:
+            rule.is_active = not rule.is_active
+            await session.commit()
+    return RedirectResponse("/rules", status_code=303)
+
+@router.post("/rules/update")
+async def update_rule(request: Request, rule_id: int = Form(...), rule_type: str = Form(...), pattern: str = Form(...), action: str = Form(...), user=Depends(get_current_user)):
+    if not user: return RedirectResponse("/login", status_code=303)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Rule).where(Rule.id == rule_id))
+        rule = result.scalar_one_or_none()
+        if rule:
+            rule.rule_type = rule_type
+            rule.pattern = pattern.strip()
+            rule.action = action
+            await session.commit()
+    return RedirectResponse("/rules", status_code=303)
+
 @router.get("/settings")
 async def settings_page(request: Request, user=Depends(get_current_user)):
     if not user: return RedirectResponse("/login", status_code=303)

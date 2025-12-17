@@ -47,8 +47,26 @@
                         {% elif rule.action == 'drop' %}<span style="color:gray">丢弃</span>
                         {% else %}<span style="color:green">放行</span>{% endif %}
                     </td>
-                    <td>{{ "✅" if rule.is_active else "❌" }}</td>
                     <td>
+                        <form action="/rules/toggle" method="post" style="display:inline;">
+                            <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                            {% if rule.is_active %}
+                            <button type="submit"
+                                style="background: none; border: none; cursor: pointer; font-size: 1.2em;"
+                                title="点击禁用">✅</button>
+                            {% else %}
+                            <button type="submit"
+                                style="background: none; border: none; cursor: pointer; font-size: 1.2em;"
+                                title="点击启用">❌</button>
+                            {% endif %}
+                        </form>
+                    </td>
+                    <td>
+                        <button class="btn"
+                            style="padding: 5px 10px; font-size: 0.8em; background: linear-gradient(45deg, #a8edea, #fed6e3); color: #555;"
+                            onclick="openEditModal('{{ rule.id }}', '{{ rule.rule_type }}', '{{ rule.pattern }}', '{{ rule.action }}')">
+                            编辑
+                        </button>
                         <form action="/rules/delete" method="post" style="display:inline;">
                             <input type="hidden" name="rule_id" value="{{ rule.id }}">
                             <button type="submit" class="btn btn-danger"
@@ -61,4 +79,68 @@
         </table>
     </div>
 </div>
+
+<!-- Edit Modal -->
+<div id="editModal"
+    style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+    <div class="glass-card" style="background: rgba(255, 255, 255, 0.9); width: 90%; max-width: 500px;">
+        <h3 style="margin-top: 0;">编辑规则</h3>
+        <form action="/rules/update" method="post">
+            <input type="hidden" id="edit_rule_id" name="rule_id">
+
+            <div style="margin-bottom: 15px;">
+                <label>类型:</label><br>
+                <select id="edit_rule_type" name="rule_type" style="width: 100%; padding: 8px; margin-top: 5px;">
+                    <option value="message_content">消息内容</option>
+                    <option value="username">用户名</option>
+                    <option value="is_command">是否为命令</option>
+                    <option value="is_forwarded">是否为转发</option>
+                </select>
+            </div>
+
+            <div style="margin-bottom: 15px;">
+                <label>模式:</label><br>
+                <input type="text" id="edit_pattern" name="pattern" required
+                    style="width: 95%; padding: 8px; margin-top: 5px;">
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label>动作:</label><br>
+                <select id="edit_action" name="action" style="width: 100%; padding: 8px; margin-top: 5px;">
+                    <option value="block">拦截 (提示)</option>
+                    <option value="drop">丢弃 (静默)</option>
+                    <option value="allow">放行 (白名单)</option>
+                </select>
+            </div>
+
+            <div style="text-align: right;">
+                <button type="button" class="btn" onclick="closeEditModal()"
+                    style="background: #ccc; margin-right: 10px;">取消</button>
+                <button type="submit" class="btn">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function openEditModal(id, type, pattern, action) {
+        document.getElementById('edit_rule_id').value = id;
+        document.getElementById('edit_rule_type').value = type;
+        document.getElementById('edit_pattern').value = pattern;
+        document.getElementById('edit_action').value = action;
+
+        document.getElementById('editModal').style.display = 'flex';
+    }
+
+    function closeEditModal() {
+        document.getElementById('editModal').style.display = 'none';
+    }
+
+    // Close if clicked outside
+    window.onclick = function (event) {
+        if (event.target == document.getElementById('editModal')) {
+            closeEditModal();
+        }
+    }
+</script>
 {% endblock %}
