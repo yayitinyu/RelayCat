@@ -1,6 +1,6 @@
 from aiogram import Router, F, Bot, types
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, CallbackQuery, Chat
+from aiogram.types import Message, CallbackQuery, Chat, ReactionTypeEmoji
 from sqlalchemy.future import select
 from sqlalchemy import update
 
@@ -217,7 +217,7 @@ async def handle_admin_reply(message: Message):
         # We use copy_message to preserve content type (text/photo/etc)
         await message.copy_to(chat_id=route.user_id)
         # Notify admin of success (optional, or just reaction)
-        await message.react([types.ReactionTypeEmoji(emoji="👍")])
+        await message.react([ReactionTypeEmoji(emoji="👍")])
     except Exception as e:
         await message.reply(f"❌ Failed to reach user: {e}")
 
