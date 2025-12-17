@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="glass-card">
+    <h2 style="margin-top: 0; color: var(--deep-pink);">🛡️ 规则管理</h2>
+
+    <div style="background: rgba(255,255,255,0.4); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+        <h4>➕ 添加新规则 (正则)</h4>
+        <form action="/rules/add" method="post" style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <select name="rule_type" style="padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+                <option value="message_content">消息内容</option>
+                <option value="username">用户名</option>
+                <option value="is_command">是否为命令</option>
+                <option value="is_forwarded">是否为转发</option>
+            </select>
+            <input type="text" name="pattern" placeholder="正则模式 (例如: ^/start)" required
+                style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+            <select name="action" style="padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+                <option value="block">拦截 (提示)</option>
+                <option value="drop">丢弃 (静默)</option>
+                <option value="allow">放行 (白名单)</option>
+            </select>
+            <button type="submit" class="btn">添加</button>
+        </form>
+    </div>
+
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>类型</th>
+                    <th>模式</th>
+                    <th>动作</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rule in rules %}
+                <tr>
+                    <td>{{ rule.id }}</td>
+                    <td>{{ rule.rule_type }}</td>
+                    <td><code style="background: #eee; padding: 2px 5px;">{{ rule.pattern }}</code></td>
+                    <td>
+                        {% if rule.action == 'block' %}<span style="color:red">拦截</span>
+                        {% elif rule.action == 'drop' %}<span style="color:gray">丢弃</span>
+                        {% else %}<span style="color:green">放行</span>{% endif %}
+                    </td>
+                    <td>{{ "✅" if rule.is_active else "❌" }}</td>
+                    <td>
+                        <form action="/rules/delete" method="post" style="display:inline;">
+                            <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                            <button type="submit" class="btn btn-danger"
+                                style="padding: 5px 10px; font-size: 0.8em;">删除</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

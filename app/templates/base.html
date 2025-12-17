@@ -1,24 +1,171 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RelayCat Admin</title>
+    <!-- 引入字体 -->
+    <link rel='stylesheet'
+        href='https://chinese-fonts-cdn.deno.dev/packages/hcqyt/dist/ChillRoundFRegular/result.css' />
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f4f9; padding: 20px; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        h1, h2 { color: #333; }
-        .stat-card { display: inline-block; width: 45%; padding: 15px; margin: 10px 0; background: #eef; border-radius: 5px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #ddd; }
-        th { background-color: #f8f8f8; }
-        button { padding: 5px 10px; cursor: pointer; }
-        .btn-danger { background: #fee; color: red; border: 1px solid red; border-radius: 3px; }
+        :root {
+            --primary-pink: #ffb7c5;
+            --deep-pink: #f78fa7;
+            --glass-bg: rgba(255, 255, 255, 0.25);
+            --glass-border: rgba(255, 255, 255, 0.4);
+            --text-color: #333;
+            --shadow-light: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+        }
+
+        body {
+            font-family: '寒蝉全圆体', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #fceeff 0%, #ffeaf0 100%);
+            color: var(--text-color);
+            min-height: 100vh;
+        }
+
+        /* 玻璃拟态 Card */
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 20px;
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--shadow-light);
+            padding: 20px;
+        }
+
+        /* 导航栏 */
+        header {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(10px);
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 1.5em;
+            color: var(--deep-pink);
+            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
+        }
+
+        nav a {
+            text-decoration: none;
+            color: #555;
+            margin-left: 20px;
+            font-weight: bold;
+            transition: color 0.3s;
+        }
+
+        nav a:hover,
+        nav a.active {
+            color: var(--deep-pink);
+        }
+
+        /* 布局 */
+        .container {
+            max-width: 1200px;
+            margin: 30px auto;
+            padding: 0 15px;
+        }
+
+        /* 按钮 */
+        .btn {
+            background: linear-gradient(45deg, var(--primary-pink), var(--deep-pink));
+            border: none;
+            padding: 10px 20px;
+            border-radius: 25px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(247, 143, 167, 0.4);
+            font-family: '寒蝉全圆体', sans-serif;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(247, 143, 167, 0.6);
+        }
+
+        .btn-danger {
+            background: linear-gradient(45deg, #ff9a9e, #fecfef);
+            color: #fff;
+        }
+
+        /* 表格 */
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 12px 15px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+        }
+
+        th {
+            color: #777;
+            font-weight: 600;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .stat-card {
+                width: 100% !important;
+                margin-bottom: 15px;
+            }
+
+            header {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            nav {
+                display: flex;
+                gap: 15px;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            nav a {
+                margin: 0;
+            }
+        }
     </style>
 </head>
+
 <body>
+    <header>
+        <h1>🐈 RelayCat Admin</h1>
+        <nav>
+            <a href="/">📊 仪表盘</a>
+            <a href="/rules">🛡️ 规则</a>
+            <a href="/settings">⚙️ 设置</a>
+            <a href="/logout" style="color: #999;">退出</a>
+        </nav>
+    </header>
+
     <div class="container">
         {% block content %}{% endblock %}
     </div>
 </body>
+
 </html>

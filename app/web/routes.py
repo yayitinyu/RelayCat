@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Request, Form, Depends, HTTPException, status
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func
+from sqlalchemy import func, delete
 from sqlalchemy.future import select
 
 from app.database.core import AsyncSessionLocal
-from app.database.models import User, MessageRoute
+from app.database.models import User, MessageRoute, Rule, Setting
 from app.settings import settings
 
 router = APIRouter()
@@ -47,9 +47,57 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
         result = await session.execute(select(User).order_by(User.created_at.desc()).limit(10))
         users = result.scalars().all()
         
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "user_count": user_count,
-        "msg_count": msg_count,
-        "users": users
-    })
+from app.database.models import User, MessageRoute, Rule, Setting
+from sqlalchemy import delete
+
+# ... (previous imports)
+
+@router.get("/rules")
+async def rules_page(request: Request, user=Depends(get_current_user)):
+    if not user: return RedirectResponse("/login", status_code=303)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Rule).order_by(Rule.id.desc()))
+        rules = result.scalars().all()
+    return templates.TemplateResponse("rules.html", {"request": request, "rules": rules})
+
+@router.post("/rules/add")
+async def add_rule(request: Request, rule_type: str = Form(...), pattern: str = Form(...), action: str = Form(...), user=Depends(get_current_user)):
+    if not user: return RedirectResponse("/login", status_code=303)
+    async with AsyncSessionLocal() as session:
+        session.add(Rule(rule_type=rule_type, pattern=pattern.strip(), action=action))
+        await session.commit()
+    return RedirectResponse("/rules", status_code=303)
+
+@router.post("/rules/delete")
+async def delete_rule(request: Request, rule_id: int = Form(...), user=Depends(get_current_user)):
+    if not user: return RedirectResponse("/login", status_code=303)
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(Rule).where(Rule.id == rule_id))
+        await session.commit()
+    return RedirectResponse("/rules", status_code=303)
+
+@router.get("/settings")
+async def settings_page(request: Request, user=Depends(get_current_user)):
+    if not user: return RedirectResponse("/login", status_code=303)
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Setting).where(Setting.key == "confirm_reply"))
+        setting = res.scalar_one_or_none()
+        confirm_reply = (setting.value == "true") if setting else False
+    return templates.TemplateResponse("settings.html", {"request": request, "confirm_reply": confirm_reply})
+
+@router.post("/settings/update")
+async def update_settings(request: Request, user=Depends(get_current_user)):
+    if not user: return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    confirm_reply = "true" if form.get("confirm_reply") else "false"
+    
+    async with AsyncSessionLocal() as session:
+        # Upsert
+        s = await session.execute(select(Setting).where(Setting.key == "confirm_reply"))
+        setting = s.scalar_one_or_none()
+        if not setting:
+            session.add(Setting(key="confirm_reply", value=confirm_reply))
+        else:
+            setting.value = confirm_reply
+        await session.commit()
+    return RedirectResponse("/settings", status_code=303)

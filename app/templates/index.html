@@ -1,43 +1,61 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>Dashboard</h1>
-<div style="display: flex; justify-content: space-between;">
-    <div class="stat-card">
-        <h3>Total Users</h3>
-        <p style="font-size: 2em; margin: 0;">{{ user_count }}</p>
+<div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 30px;">
+    <div class="glass-card stat-card" style="flex: 1; text-align: center;">
+        <h3 style="margin: 0; color: #777;">总用户数</h3>
+        <p style="font-size: 2.5em; margin: 10px 0; color: var(--deep-pink); font-weight: bold;">{{ user_count }}</p>
     </div>
-    <div class="stat-card">
-        <h3>Total Messages</h3>
-        <p style="font-size: 2em; margin: 0;">{{ msg_count }}</p>
+    <div class="glass-card stat-card" style="flex: 1; text-align: center;">
+        <h3 style="margin: 0; color: #777;">处理消息</h3>
+        <p style="font-size: 2.5em; margin: 10px 0; color: #66ccff; font-weight: bold;">{{ msg_count }}</p>
     </div>
 </div>
 
-<h2>Recent Users</h2>
-<table>
-    <thead>
-        <tr>
-            <th>ID</th>
-            <th>Name</th>
-            <th>Verified</th>
-            <th>Action</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for user in users %}
-        <tr>
-            <td>{{ user.id }}</td>
-            <td>{{ user.first_name }}</td>
-            <td>{{ "✅" if user.is_verified else "❌" }}</td>
-            <td>
-                {% if user.is_banned %}
-                <span style="color:red">Banned</span>
-                {% else %}
-                <button class="btn-danger">Ban</button>
-                {% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<div class="glass-card">
+    <h2 style="margin-top: 0; margin-bottom: 20px; border-left: 5px solid var(--deep-pink); padding-left: 10px;">👤
+        最近用户访问</h2>
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>昵称</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td><code
+                            style="background: rgba(255,255,255,0.5); padding: 2px 5px; border-radius: 4px;">{{ user.id }}</code>
+                    </td>
+                    <td>{{ user.first_name }}</td>
+                    <td>
+                        {% if user.is_verified %}<span style="color: green;">✅ 已验证</span>
+                        {% else %}<span style="color: #aaa;">⚪ 未验证</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if user.is_banned %}
+                        <span style="color: red; font-weight: bold;">🚫 Banned</span>
+                        <form action="/unban_user" method="post" style="display:inline;">
+                            <input type="hidden" name="user_id" value="{{ user.id }}">
+                            <button type="submit" class="btn btn-danger"
+                                style="padding: 2px 8px; font-size: 0.8em;">解封</button>
+                        </form>
+                        {% else %}
+                        <form action="/ban_user" method="post" style="display:inline;">
+                            <input type="hidden" name="user_id" value="{{ user.id }}">
+                            <button type="submit" class="btn btn-danger"
+                                style="padding: 2px 8px; font-size: 0.8em; background: #ffdede; color: red; box-shadow: none;">封禁</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
 {% endblock %}

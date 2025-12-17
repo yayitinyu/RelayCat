@@ -7,8 +7,9 @@ from sqlalchemy import update
 from app.bot.loader import bot, dp
 from app.settings import settings
 from app.database.core import AsyncSessionLocal
-from app.database.models import User, MessageRoute
+from app.database.models import User, MessageRoute, Rule, Setting
 from app.bot.verification import generate_verification_challenge
+import re
 
 router = Router()
 dp.include_router(router)
@@ -137,13 +138,38 @@ async def cmd_unban(message: Message):
     
     await message.answer(f"✅ User {target_id} has been unbanned.")
 
+async def check_rules(message: Message, user: User) -> str:
+    """Returns 'allow', 'block', or 'drop'"""
+    # 1. Default Policy: Block non-admin commands
+    if message.text and message.text.startswith("/") and message.from_user.id != settings.ADMIN_ID:
+        return "drop" # Silent drop for commands
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Rule).where(Rule.is_active == True))
+        rules = result.scalars().all()
+    
+    for rule in rules:
+        matched = False
+        try:
+            if rule.rule_type == "message_content":
+                text = message.text or message.caption or ""
+                if re.search(rule.pattern, text): matched = True
+            elif rule.rule_type == "username":
+                if re.search(rule.pattern, user.username or ""): matched = True
+            elif rule.rule_type == "is_forwarded":
+                 if message.forward_origin and rule.pattern == "true": matched = True
+        except Exception:
+            continue # Invalid regex
+
+        if matched:
+            return rule.action
+            
+    return "allow"
+
 # ---------- Message Forwarding (User -> Admin) ----------
 @router.message(F.chat.type == "private")
 async def handle_user_message(message: Message):
     if message.from_user.id == settings.ADMIN_ID:
-        # Admin sent a message in private chat to bot? 
-        # Usually invalid context unless testing. 
-        # Admin reply logic is handled via reply_to_message checks.
         if message.reply_to_message:
             await handle_admin_reply(message)
         return
@@ -160,6 +186,13 @@ async def handle_user_message(message: Message):
         
     if user.is_banned:
         return # Ignore
+
+    # Rule Check
+    action = await check_rules(message, user)
+    if action == "drop": return
+    if action == "block":
+        await message.answer("🚫 Message blocked by filter.")
+        return
 
     # Forward to Admin
     # We use copy_message or forward_message. 
@@ -216,8 +249,14 @@ async def handle_admin_reply(message: Message):
     try:
         # We use copy_message to preserve content type (text/photo/etc)
         await message.copy_to(chat_id=route.user_id)
-        # Notify admin of success (optional, or just reaction)
-        await message.react([ReactionTypeEmoji(emoji="👍")])
+        
+        # Confirm Reply (Thumps Up) if enabled
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(select(Setting).where(Setting.key == "confirm_reply"))
+            setting = res.scalar_one_or_none()
+            if setting and setting.value == "true":
+                 await message.react([ReactionTypeEmoji(emoji="👍")])
+            
     except Exception as e:
         await message.reply(f"❌ Failed to reach user: {e}")
 

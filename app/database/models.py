@@ -39,3 +39,13 @@ class BadWord(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     word = Column(String, unique=True, index=True)
     is_regex = Column(Boolean, default=False)
+
+class Rule(Base):
+    __tablename__ = "rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rule_type = Column(String, default="message_content") # username, message_content, is_command, is_forwarded
+    pattern = Column(String, nullable=False)
+    action = Column(String, default="block") # block, drop, allow
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
