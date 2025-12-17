@@ -50,8 +50,12 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
         result = await session.execute(select(User).order_by(User.created_at.desc()).limit(10))
         users = result.scalars().all()
         
-from app.database.models import User, MessageRoute, Rule, Setting
-from sqlalchemy import delete
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "user_count": user_count,
+        "msg_count": msg_count,
+        "users": users
+    })
 
 # ... (previous imports)
 
