@@ -1,0 +1,167 @@
+from aiogram import Router, F, Bot
+from aiogram.filters import CommandStart, Command
+from aiogram.types import Message, CallbackQuery, Chat
+from sqlalchemy.future import select
+from sqlalchemy import update
+
+from app.bot.loader import bot
+from app.settings import settings
+from app.database.core import AsyncSessionLocal
+from app.database.models import User, MessageRoute
+from app.bot.verification import generate_verification_challenge
+
+router = Router()
+
+from aiogram.types import User as TgUser
+
+async def get_or_create_user(tg_user: TgUser):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.id == tg_user.id))
+        user = result.scalar_one_or_none()
+        if not user:
+            user = User(
+                id=tg_user.id,
+                username=tg_user.username,
+                first_name=tg_user.first_name,
+                last_name=tg_user.last_name,
+                is_verified=False
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+        return user
+
+@router.message(CommandStart())
+async def cmd_start(message: Message):
+    if message.chat.type != 'private':
+        return
+
+    user = await get_or_create_user(message.from_user)
+    
+    if user.is_verified:
+        await message.answer("Hello again! You are verified. Messages you send here will be forwarded to the admin.")
+    else:
+        # Start verification
+        target, markup = generate_verification_challenge()
+        # Store target in state or just check callback?
+        # A simple stateless way is to encode target in callback data of correct answer, but that's insecure.
+        # Better: We encode the target in the text instructions.
+        await message.answer(
+            f"Welcome! To prove you are human, please tap the {target} button below:",
+            reply_markup=markup
+        )
+
+@router.callback_query(F.data.startswith("verify:"))
+async def on_verify_callback(callback: CallbackQuery):
+    emoji_clicked = callback.data.split(":")[1]
+    # We need to know what the target was.
+    # Parsing the message text is a hack but stateless and simple for this level.
+    # Text: "Welcome! ... tap the 🍎 button below:"
+    
+    msg_text = callback.message.text
+    if "tap the" not in msg_text:
+        await callback.answer("Session expired or invalid.", show_alert=True)
+        return
+        
+    target_emoji = msg_text.split("tap the")[1].strip().split(" ")[0]
+    
+    if emoji_clicked == target_emoji:
+        # Verify user
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                update(User).where(User.id == callback.from_user.id).values(is_verified=True)
+            )
+            await session.commit()
+            
+        await callback.message.edit_text("✅ Verified! You can now send messages to the admin.")
+    else:
+        # Wrong answer, retry
+        target, markup = generate_verification_challenge()
+        await callback.message.edit_text(
+            f"Wrong! Try again. Tap the {target}:",
+            reply_markup=markup
+        )
+
+# ---------- Message Forwarding (User -> Admin) ----------
+@router.message(F.chat.type == "private")
+async def handle_user_message(message: Message):
+    if message.from_user.id == settings.ADMIN_ID:
+        # Admin sent a message in private chat to bot? 
+        # Usually invalid context unless testing. 
+        # Admin reply logic is handled via reply_to_message checks.
+        if message.reply_to_message:
+            await handle_admin_reply(message)
+        return
+
+    # Check verification
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.id == message.from_user.id))
+        user = result.scalar_one_or_none()
+        
+    if not user or not user.is_verified:
+        await message.answer("Please type /start to verify yourself first.")
+        return
+        
+    if user.is_banned:
+        return # Ignore
+
+    # Forward to Admin
+    # We use copy_message or forward_message. 
+    # RelayCat original design: Forward message, then send metadata card.
+    
+    try:
+        # Forward original
+        fwd = await message.forward(settings.ADMIN_ID)
+        
+        # Send info card
+        info_text = (
+            f"👤 <b>User Info</b>\n"
+            f"ID: <code>{user.id}</code>\n"
+            f"Name: {user.first_name} {user.last_name or ''}\n"
+            f"Username: @{user.username or 'none'}\n"
+            f"<i>Reply to this or the forwarded message to answer.</i>"
+        )
+        card = await bot.send_message(settings.ADMIN_ID, info_text, reply_to_message_id=fwd.message_id)
+        
+        # Save route
+        async with AsyncSessionLocal() as session:
+            # Route for forwarding
+            session.add(MessageRoute(
+                user_id=user.id,
+                admin_message_id=fwd.message_id,
+                user_message_id=message.message_id
+            ))
+            # Route for card
+            session.add(MessageRoute(
+                user_id=user.id,
+                admin_message_id=card.message_id,
+                user_message_id=message.message_id
+            ))
+            await session.commit()
+            
+    except Exception as e:
+        # Admin might have blocked bot
+        print(f"Error forwarding: {e}")
+
+# ---------- Admin Reply (Admin -> User) ----------
+async def handle_admin_reply(message: Message):
+    # Check if reply is to a routed message
+    reply_id = message.reply_to_message.message_id
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(MessageRoute).where(MessageRoute.admin_message_id == reply_id))
+        route = result.scalar_one_or_none()
+        
+    if not route:
+        await message.answer("⚠️ Route not found. Cannot reply to this message.")
+        return
+        
+    # Send back to user
+    try:
+        # We use copy_message to preserve content type (text/photo/etc)
+        await message.copy_to(chat_id=route.user_id)
+        # Notify admin of success (optional, or just reaction)
+        await message.react([types.ReactionTypeEmoji(emoji="👍")])
+    except Exception as e:
+        await message.reply(f"❌ Failed to reach user: {e}")
+

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Dashboard</h1>
+<div style="display: flex; justify-content: space-between;">
+    <div class="stat-card">
+        <h3>Total Users</h3>
+        <p style="font-size: 2em; margin: 0;">{{ user_count }}</p>
+    </div>
+    <div class="stat-card">
+        <h3>Total Messages</h3>
+        <p style="font-size: 2em; margin: 0;">{{ msg_count }}</p>
+    </div>
+</div>
+
+<h2>Recent Users</h2>
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Verified</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for user in users %}
+        <tr>
+            <td>{{ user.id }}</td>
+            <td>{{ user.first_name }}</td>
+            <td>{{ "✅" if user.is_verified else "❌" }}</td>
+            <td>
+                {% if user.is_banned %}
+                <span style="color:red">Banned</span>
+                {% else %}
+                <button class="btn-danger">Ban</button>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

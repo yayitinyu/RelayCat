@@ -1,0 +1,9 @@
+aiogram>=3.0.0
+fastapi>=0.100.0
+uvicorn[standard]
+sqlalchemy>=2.0.0
+aiosqlite
+pydantic-settings
+jinja2
+python-multipart
+itsdangerous

@@ -1,523 +1,121 @@
-# RelayCat
+# RelayCat (Python Version)
 
-RelayCat is a tiny Telegram relay bot that sits between users and an admin account:
+> A lightweight "Bidirectional Message Relay Bot" for Telegram. Features: **Bidirectional Forwarding, Anti-Spam, Web Admin Panel, No reCAPTCHA**.
 
-- Users talk to the bot in private chat.
-- The bot forwards messages to the admin.
-- The admin replies to the forwarded message or an attached info card.
-- RelayCat sends the reply back to the original user (non-forwarded).
+RelayCat has been rewritten in Python (Aiogram + FastAPI) to forward private messages from users to the admin, allowing the admin to reply directly.
 
-On top of that, RelayCat adds:
-
-- A simple Google reCAPTCHA + JWT one-time verification flow.
-- Optional bad-word filtering and user bans.
-- A file-based, database-free design that’s easy to inspect and hack on.
+[中文文档](./README.md)
 
 ---
 
-## Table of Contents
+## 🚀 Features
 
-- [Features](#features)
-- [How it works](#how-it-works)
-- [Architecture](#architecture)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Configuration](#configuration)
-  - [Telegram & webhook](#telegram--webhook)
-  - [Verification & JWT](#verification--jwt)
-  - [Data storage](#data-storage)
-  - [Bad words filter](#bad-words-filter)
-  - [Rate limiting](#rate-limiting)
-- [Runtime behaviour](#runtime-behaviour)
-  - [User perspective](#user-perspective)
-  - [Admin perspective](#admin-perspective)
-- [Security notes](#security-notes)
-- [Troubleshooting](#troubleshooting)
-- [Roadmap ideas](#roadmap-ideas)
-- [License](#license)
+- **Bidirectional Relay**
+  - Users send private messages to the Bot -> Forwarded to Admin.
+  - Admin replies to the forwarded message (or info card) -> Sent back to the User.
+  - Supports Text, Photos, Files, Stickers, etc.
 
----
+- **Native Verification (No reCAPTCHA)**
+  - Replaced the complex web-based Google reCAPTCHA.
+  - Uses **Telegram Native In-Chat Verification** (Emoji Challenge).
+  - Users must click the correct Emoji to verify they are human before sending messages.
 
-## Features
+- **Web Admin Panel**
+  - Built-in FastAPI admin dashboard.
+  - **Dashboard**: View user counts and message stats.
+  - **User Management**: View recent users, Ban/Unban users easily.
+  - Default URL: `http://localhost:8080/`
 
-- **Two-way relay**
-  - All private messages to the bot are forwarded to a single admin.
-  - Admin replies to the forwarded message (or the info card) to answer the user.
-  - Media/files/stickers are re-sent as proper messages, not screenshots.
+- **Database Persistence**
+  - Uses **SQLite** (`relaycat.db`) by default. No complex setup required.
+  - Supports **PostgreSQL** or MySQL via SQLAlchemy configuration.
 
-- **One-time human verification**
-  - First-time users must pass a Google reCAPTCHA check via `verify.php`.
-  - Verification state is stored in a JSON file and respected on all future messages.
-
-- **Anti-spam / abuse controls**
-  - Optional bad-word filter (substring / wildcard / regex).
-  - File-based ban list: `/ban`, `/unban` (`/allow` alias), `/banlist`.
-  - Banned users’ inbound messages are completely ignored (including `/start`).
-
-- **Admin-friendly UX**
-  - Every forwarded message comes with a compact “user card”:
-    - `user_id` (as inline code)
-    - `@username` (or “(none)”)
-    - Name (with a ⭐ if the user is Premium)
-  - Replying to either the forwarded message or the card sends a message back.
-
-- **No database required**
-  - All state stored in a few JSON files (users, routes, bans, bad words).
-  - Easy to back up, inspect, and reset.
-
-- **Security-aware**
-  - Webhook secret token verification.
-  - Verification page with strict CSP, HSTS (on HTTPS), no directory listing, etc.
-  - JSON state files can live outside the web root.
+- **Docker Ready**
+  - Includes `docker-compose.yml` for instant deployment.
 
 ---
 
-## How it works
+## 🛠️ Quick Start (Docker)
 
-High-level flow:
-
-1. **User → Bot (first message)**
-   - User starts a private chat with the bot and sends `/start` or any text.
-   - If the user is unknown and not verified, the bot replies with a verification link:
-     - `https://yourdomain.com/verify.php?token=<JWT>`
-
-2. **Verification page (`verify.php`)**
-   - Decodes the “verify” JWT to get `user_id` and expiry.
-   - Displays a reCAPTCHA v2 widget.
-   - On success, generates a `success` JWT and shows a copy button for:
-     - `/start <success_jwt>`
-
-3. **User → Bot (`/start <success_jwt>`)**
-   - Telegram sends `/start <token>` to the bot.
-   - `webhook.php` validates the JWT (signature, expiry, user_id).
-   - Adds the user to `verified_users.json` and confirms verification.
-
-4. **Normal messaging**
-   - Verified users’ messages are forwarded to the admin account.
-   - The admin replies to the forwarded message or its info card.
-   - The bot sends that reply back to the original user (non-forwarded).
-
----
-
-## Architecture
-
-The project consists of two main entrypoints:
-
-- `webhook.php`  
-  The Telegram webhook endpoint. Handles:
-  - All incoming updates.
-  - User verification state.
-  - Message forwarding and reverse relaying.
-  - Admin commands (ban, bad words, etc.).
-  - Webhook secret validation.
-
-- `verify.php`  
-  The human verification page. Handles:
-  - Decoding verification JWTs.
-  - reCAPTCHA v2 display and backend verification.
-  - Generating success JWTs and showing `/start <token>` for copy.
-
-Shared configuration lives in:
-
-- `config.php`  
-  Central configuration: bot token, admin ID, JWT secret, reCAPTCHA keys, data directory, rate limiting, bad word settings, etc.
-
-Dependencies (via Composer):
-
-- `firebase/php-jwt`
-- (Optional) Any PSR-4 autoloader via `vendor/autoload.php`.
-
----
-
-## Requirements
-
-- PHP 8.0+ (8.1+ recommended)
-- Composer
-- HTTPS-enabled web server (Apache, Nginx, etc.)
-  - A valid (non-self-signed) TLS certificate
-- A Telegram bot token (via @BotFather)
-- Google reCAPTCHA v2 “I’m not a robot” keys
-
----
-
-## Installation
-
-1. **Clone or copy the project**
-
+1. **Clone the Repo**
    ```bash
-   git clone <your-repo-url> relaycat
-   cd relaycat
+   git clone https://github.com/your-repo/RelayCat.git
+   cd RelayCat
    ```
 
-2. **Install PHP dependencies**
+2. **Configure Environment**
+   Edit `docker-compose.yml` or create a `.env` file:
 
+   ```yaml
+   environment:
+     - RELAYCAT_BOT_TOKEN=your_bot_token_here       # Your Bot Token
+     - RELAYCAT_ADMIN_ID=123456789                  # Your Telegram numeric ID
+     - RELAYCAT_ADMIN_PASSWORD=secure_password      # Password for Admin Panel
+     - RELAYCAT_SECRET_KEY=change_me_to_random      # Secret key for sessions
+   ```
+
+3. **Start Services**
    ```bash
-   composer install --no-dev --optimize-autoloader
+   docker compose up -d --build
    ```
 
-   Ensure `vendor/autoload.php` exists and is readable by PHP.
-
-3. **Create a data directory (outside web root if possible)**
-
-   Example layout:
-
-   ```text
-   /var/www/html/relaycat      # web root (webhook.php, verify.php, config.php)
-   /var/www/relaycat-data      # data directory (JSON files, bad_words.txt)
-   ```
-
-4. **Configure Apache / Nginx**
-
-   * Point your HTTPS virtual host at the directory containing `webhook.php` and `verify.php`.
-   * Disable directory listing and block direct access to `.json`/`.tmp` if they are under web root.
-   * Make sure PHP is enabled for both scripts.
-
-5. **Create and edit `config.php`**
-
-   See the next section for detailed options.
-
-6. **Set Telegram webhook**
-
-   Example (with a secret token):
-
-   ```bash
-   curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
-     -d "url=https://yourdomain.com/webhook.php" \
-     -d "secret_token=<YOUR_TG_WEBHOOK_SECRET>"
-   ```
-
-   The `secret_token` must match `TG_WEBHOOK_SECRET` in `config.php`.
-
-7. **Verify webhook status**
-
-   ```bash
-   curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo"
-   ```
-
-   Confirm:
-
-   * `url` is your `webhook.php`.
-   * `last_error_message` is empty.
-   * `pending_update_count` looks reasonable.
-
-### Docker Compose quick start
-
-Perfect for Ubuntu / Debian servers. Make sure [Docker Engine](https://docs.docker.com/engine/install/) and the `docker compose` plugin are installed.
-
-1. **Install Docker (if needed)**
-
-   ```bash
-   sudo apt update
-   sudo apt install -y docker.io docker-compose-plugin
-   sudo systemctl enable --now docker
-   ```
-
-2. **Clone the repo and edit environment variables**
-
-   ```bash
-   git clone <your-repo-url> relaycat
-   cd relaycat
-   $EDITOR docker-compose.yml   # update every RELAYCAT_* value
-   ```
-
-   Environment variables defined in `docker-compose.yml` override the defaults inside `config.php` (see “Environment variables / Docker” below).
-
-3. **Build and start the stack**
-
-   ```bash
-   docker compose build --pull
-   docker compose up -d
-   docker compose logs -f relaycat
-   ```
-
-   By default port `8080` on the host maps to `80` inside the container—tweak the `ports` section if necessary.
-
-4. **Put HTTPS in front**
-
-   Terminate TLS on the host or a reverse proxy (Nginx, Caddy, Traefik, …) and forward `https://yourdomain.com` to `http://127.0.0.1:8080`. Add `X-Forwarded-*` headers if your proxy supports them.
-
-5. **Set the Telegram webhook**
-
-   Once `https://yourdomain.com/webhook.php` is reachable from the internet, run the `setWebhook` command from step 6 and keep the `secret_token` identical to `RELAYCAT_TG_WEBHOOK_SECRET`.
-
-6. **Persist your data**
-
-   Docker Compose binds `/var/lib/relaycat` to the named volume `relaycat-data`. Back it up or migrate it via `docker run --rm -v relaycat-data:/data busybox ls -al /data`.
+4. **Usage**
+   - **Bot**: Send `/start` to your bot.
+   - **Admin Web**: Visit `http://ip:8080/login` to manage the bot.
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
-All main options live in `config.php`. The important ones:
+All settings are managed via Environment Variables.
 
-### Environment variables / Docker
-
-Any environment variable starting with `RELAYCAT_` overrides its matching constant in `config.php`. This is what the Docker image (and `docker-compose.yml`) relies on. Common mappings:
-
-| Environment variable | Constant | Purpose |
-| --- | --- | --- |
-| `RELAYCAT_BOT_TOKEN` | `BOT_TOKEN` | Telegram Bot Token |
-| `RELAYCAT_BOT_USERNAME` | `BOT_USERNAME` | Bot username without `@` |
-| `RELAYCAT_ADMIN_ID` | `ADMIN_ID` | Admin Telegram numeric ID |
-| `RELAYCAT_TG_WEBHOOK_SECRET` | `TG_WEBHOOK_SECRET` | Webhook secret token |
-| `RELAYCAT_SHARED_JWT_SECRET` | `SHARED_JWT_SECRET` | JWT signing secret |
-| `RELAYCAT_RECAPTCHA_SITE_KEY` / `SECRET_KEY` | same | Google reCAPTCHA keys |
-| `RELAYCAT_VERIFY_URL` | `VERIFY_URL` | Public URL of `verify.php` |
-| `RELAYCAT_DATA_DIR` | `DATA_DIR` | Directory for JSON / state files (defaults to `/var/lib/relaycat` in the container) |
-
-Additional knobs (rate limiting, bad words, etc.) also expose `RELAYCAT_...` variables—search inside `config.php` for the full list.
-
-### Telegram & webhook
-
-```php
-const BOT_TOKEN    = 'YOUR_TELEGRAM_BOT_TOKEN';
-const BOT_USERNAME = 'YourBotUserName';    // without @
-const ADMIN_ID     = 123456789;            // your Telegram numeric ID
-
-const ALLOW_BOT_INITIATED = false;         // ignore other bots DM’ing this bot
-```
-
-Webhook secret:
-
-```php
-const TG_WEBHOOK_SECRET      = 'change_to_a_long_random_secret';
-const ENFORCE_WEBHOOK_SECRET = true; // require X-Telegram-Bot-Api-Secret-Token
-```
-
-When `ENFORCE_WEBHOOK_SECRET` is `true`, Telegram requests without the matching header will get HTTP 403 and be ignored.
-
-### Verification & JWT
-
-```php
-const SHARED_JWT_SECRET      = 'another_long_random_secret';
-const VERIFICATION_TOKEN_TTL = 600;  // seconds
-const JWT_LEEWAY             = 300;  // seconds of clock skew
-
-const RECAPTCHA_SITE_KEY   = 'your_recaptcha_site_key';
-const RECAPTCHA_SECRET_KEY = 'your_recaptcha_secret_key';
-const VERIFY_URL           = 'https://yourdomain.com/verify.php';
-```
-
-* `SHARED_JWT_SECRET` is used by both `webhook.php` and `verify.php`.
-* `VERIFY_URL` must be the public HTTPS URL of `verify.php`.
-* `VERIFICATION_TOKEN_TTL` + `JWT_LEEWAY` define how long verification tokens remain valid.
-
-### Data storage
-
-State is stored in JSON files under `DATA_DIR`:
-
-```php
-const DATA_DIR            = '/var/www/relaycat-data';
-const VERIFIED_USERS_FILE = DATA_DIR . '/verified_users.json';
-const ROUTE_MAP_FILE      = DATA_DIR . '/routes.json';       // admin message → user mapping
-const BANNED_USERS_FILE   = DATA_DIR . '/banned_users.json';
-const RATE_LIMIT_FILE     = DATA_DIR . '/rate_limit.json';
-```
-
-`webhook.php` will create the directory and files as needed (ensure the PHP user can read/write this directory).
-
-### Bad words filter
-
-```php
-const BAD_WORDS_FILE            = DATA_DIR . '/bad_words.txt';
-const BAD_WORDS_IGNORE_CASE     = true;
-const BAD_WORDS_ENABLE_WILDCARD = true;
-const BAD_WORDS_ENABLE_REGEX    = false;
-```
-
-* `bad_words.txt`: one entry per line.
-* If `BAD_WORDS_ENABLE_REGEX` is `true`, each line is treated as a raw PCRE pattern (use with care).
-* If wildcard mode is enabled, `*` and `?` are supported within patterns.
-* When a message hits the filter:
-
-  * The user is told their message contains blocked content.
-  * The specific word is not echoed back.
-
-### Rate limiting
-
-Simple per-user sliding window in PHP:
-
-```php
-const RATE_LIMIT_ENABLED    = true;
-const RATE_LIMIT_WINDOW_SEC = 10;   // window size
-const RATE_LIMIT_MAX_EVENTS = 30;   // max messages per user per window
-```
-
-If a user sends more than `RATE_LIMIT_MAX_EVENTS` messages within `RATE_LIMIT_WINDOW_SEC`, incoming messages are ignored until they fall back under the threshold.
-
-For large deployments, you should consider adding reverse-proxy-level rate limiting (e.g. Nginx `limit_req`) or a Redis-based solution.
+| Variable | Required | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `RELAYCAT_BOT_TOKEN` | ✅ | - | Telegram Bot Token (from @BotFather) |
+| `RELAYCAT_ADMIN_ID` | ✅ | - | Admin's Numeric ID |
+| `RELAYCAT_ADMIN_PASSWORD` | ❌ | `admin` | Password for Web Admin Panel |
+| `RELAYCAT_SECRET_KEY` | ❌ | `change_me` | Secret key for session encryption |
+| `RELAYCAT_DB_URL` | ❌ | `sqlite+aiosqlite:////data/relaycat.db` | Database URL (PostgreSql supported) |
+| `RELAYCAT_ENABLE_FORWARDING` | ❌ | `True` | Enable message forwarding |
 
 ---
 
-## Runtime behaviour
+## 🧩 Architecture
 
-### User perspective
+This project is a complete rewrite from the legacy PHP version to a modern Python Async stack:
 
-* `/start`
+- **Bot Framework**: `aiogram 3.x` (Async)
+- **Web Framework**: `FastAPI` (Admin Panel)
+- **Database ORM**: `SQLAlchemy 2.0` (Async)
+- **Server**: `uvicorn` (ASGI)
 
-  * If unverified:
-
-    * Bot replies with a verification link (to `verify.php`).
-  * If already verified:
-
-    * Bot confirms that messages can be sent normally.
-
-* `/help`
-
-  * If unverified:
-
-    * Short introduction + verification link.
-  * If verified:
-
-    * Explains that messages are forwarded to the admin and replies come back via the bot.
-
-* Normal messages
-
-  * If verified and not banned:
-
-    * Message is forwarded to the admin.
-  * If unverified:
-
-    * Bot asks you to complete verification first.
-  * If banned:
-
-    * Message is silently ignored.
-
-### Admin perspective
-
-All admin behaviour is based on `ADMIN_ID`.
-
-* `/help`
-
-  * Shows an admin-specific help message with all available commands.
-
-* When a user sends a message (and passes all checks)
-
-  * Bot forwards the original message to the admin.
-  * Bot then replies to that forwarded message with a compact user info card:
-
-    * User ID (as inline code)
-    * Username (or “(none)”)
-    * Display name (+ ⭐ for Premium)
-    * A hint to “reply here to answer the user”
-  * Both the forwarded message and the card are mapped to the user for later replies.
-
-* Replying to forwarded messages / info cards
-
-  * Bot sends your reply as a real message to the target user:
-
-    * For text: `sendMessage`
-    * For media/files: `sendPhoto`, `sendDocument`, `sendVideo`, etc.
-  * If the original message no longer exists (reply target gone), the bot tries again without `reply_to_message_id` and informs the admin if needed.
-
-* Admin commands
-
-  * **Ban / unban**
-
-    ```text
-    /ban <user_id>         # ban by ID
-    /ban                   # as a reply to a forwarded message or card
-    /unban <user_id>       # unban by ID
-    /allow <user_id>       # alias of /unban
-    ```
-
-  * **List bans**
-
-    ```text
-    /banlist
-    ```
-
-  * **Bad words (basic management)**
-
-    ```text
-    /badadd <word_or_pattern>
-    /baddel <word_or_pattern>
-    ```
-
-    These commands are intentionally simple; editing the `bad_words.txt` file directly is still the recommended way for bulk changes.
+All components run in a single process (concurrency via asyncio), making it resource-efficient and easy to deploy.
 
 ---
 
-## Security notes
+## 📝 Local Development
 
-RelayCat was designed with a few extra security considerations:
+If you want to run it without Docker:
 
-* **Webhook origin check**
+1. **Install Dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-  * `webhook.php` optionally enforces a Telegram webhook secret (`X-Telegram-Bot-Api-Secret-Token`).
-  * Requests without the correct secret are rejected with HTTP 403.
+2. **Set Environment Variables**
+   Create a `.env` file in the root directory:
+   ```ini
+   RELAYCAT_BOT_TOKEN=xxx
+   RELAYCAT_ADMIN_ID=xxx
+   ```
 
-* **HTTPS only**
-
-  * `VERIFY_URL` should always be HTTPS.
-  * `verify.php` enables HSTS when served over HTTPS.
-
-* **Verification page hardening**
-
-  * Strict CSP (`default-src 'self'`, whitelisted Google reCAPTCHA domains).
-  * `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
-  * No caching (`Cache-Control: no-store, no-cache, must-revalidate`).
-
-* **State files**
-
-  * Recommended: put `DATA_DIR` outside the web root.
-  * If that’s not possible, add web server rules to deny direct access to JSON/TMP files.
-
-* **Admin-only actions**
-
-  * Management commands (`/ban`, `/badadd`, etc.) are only honoured for `ADMIN_ID`.
-  * Banned users cannot trigger any commands or relays.
+3. **Run**
+   ```bash
+   python -m app.main
+   ```
 
 ---
 
-## Troubleshooting
+## 📄 License
 
-* **Webhook set but bot is “silent”**
-
-  1. Check webhook info:
-
-     ```bash
-     curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo"
-     ```
-
-  2. Confirm:
-
-     * `url` points to `webhook.php`, not `verify.php`.
-     * `last_error_message` is empty.
-       If it mentions `Forbidden`, double-check your `secret_token` vs `TG_WEBHOOK_SECRET`.
-
-* **Verification link says token is invalid or expired**
-
-  * Check server time and timezone.
-  * In DEBUG mode, the pages print PHP time and token expiry in both Unix and ISO format.
-
-* **Cannot write JSON files**
-
-  * Ensure the PHP user has `rwx` permissions on `DATA_DIR`.
-  * Check web server error logs for permission errors.
-
-* **Bad words not applied**
-
-  * Confirm `BAD_WORDS_FILE` path.
-  * Ensure there’s at least one non-empty line.
-  * If using regex mode, verify that the pattern is a valid PCRE.
-
----
-
-## Roadmap ideas
-
-Some possible directions if you want to extend RelayCat:
-
-* Multiple admins / routing rules.
-* Per-user notes/labels for the admin.
-* Web dashboard for viewing routes and bans.
-* Redis-based or DB-backed storage layer.
-* Support for grouped media albums as a single logical unit.
-
----
-
-## License
-
-MIT License.
-You are free to use, modify and redistribute RelayCat in your own projects.
-If you publish improvements or forks, a short mention of the original project name is appreciated.
+MIT License

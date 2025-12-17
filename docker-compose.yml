@@ -1,24 +1,19 @@
+version: '3.8'
+
 services:
   relaycat:
-    build:
-      context: .
-      args:
-        PHP_VERSION: "8.2"
-    container_name: relaycat
-    restart: unless-stopped
+    build: .
+    restart: always
     ports:
-      - "8080:80"
-    environment:
-      RELAYCAT_DEBUG: "false"
-      RELAYCAT_BOT_TOKEN: "YOUR_TELEGRAM_BOT_TOKEN"
-      RELAYCAT_BOT_USERNAME: "YourBotUserName"
-      RELAYCAT_ADMIN_ID: "123456789"
-      RELAYCAT_TG_WEBHOOK_SECRET: "CHANGE_TO_A_LONG_RANDOM_SECRET"
-      RELAYCAT_SHARED_JWT_SECRET: "CHANGE_THIS_TO_A_LONG_RANDOM_SECRET"
-      RELAYCAT_RECAPTCHA_SITE_KEY: "YOUR_RECAPTCHA_SITE_KEY"
-      RELAYCAT_RECAPTCHA_SECRET_KEY: "YOUR_RECAPTCHA_SECRET_KEY"
-      RELAYCAT_VERIFY_URL: "https://example.com/verify.php"
+      - "8080:8080"
     volumes:
-      - relaycat-data:/var/lib/relaycat
+      - relaycat-data:/data
+    environment:
+      - RELAYCAT_BOT_TOKEN=${RELAYCAT_BOT_TOKEN}
+      - RELAYCAT_ADMIN_ID=${RELAYCAT_ADMIN_ID}
+      - RELAYCAT_ADMIN_PASSWORD=${RELAYCAT_ADMIN_PASSWORD:-admin}
+      - RELAYCAT_SECRET_KEY=${RELAYCAT_SECRET_KEY:-change_me}
+      - RELAYCAT_DB_URL=sqlite+aiosqlite:////data/relaycat.db
+
 volumes:
   relaycat-data:
