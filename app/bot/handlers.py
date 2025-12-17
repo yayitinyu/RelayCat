@@ -39,7 +39,7 @@ async def cmd_start(message: Message):
 
     user = await get_or_create_user(message.from_user)
     
-    if user.is_verified:
+    if user.is_verified or message.from_user.id == settings.ADMIN_ID:
         await message.answer("Hello again! You are verified. Messages you send here will be forwarded to the admin.")
     else:
         # Start verification
@@ -83,6 +83,60 @@ async def on_verify_callback(callback: CallbackQuery):
             reply_markup=markup
         )
 
+# ---------- Admin Commands ----------
+@router.message(Command("ban"), F.from_user.id == settings.ADMIN_ID)
+async def cmd_ban(message: Message):
+    # Extract ID from args or reply
+    target_id = None
+    args = message.text.split()
+    
+    if len(args) > 1 and args[1].isdigit():
+        target_id = int(args[1])
+    elif message.reply_to_message:
+        # Check route
+        reply_id = message.reply_to_message.message_id
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(MessageRoute).where(MessageRoute.admin_message_id == reply_id))
+            route = result.scalar_one_or_none()
+            if route:
+                target_id = route.user_id
+    
+    if not target_id:
+        await message.answer("⚠️ Usage: /ban <user_id> or reply to a user message.")
+        return
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(update(User).where(User.id == target_id).values(is_banned=True))
+        await session.commit()
+    
+    await message.answer(f"🔒 User {target_id} has been banned.")
+
+@router.message(Command("unban"), F.from_user.id == settings.ADMIN_ID)
+async def cmd_unban(message: Message):
+    target_id = None
+    args = message.text.split()
+    
+    if len(args) > 1 and args[1].isdigit():
+        target_id = int(args[1])
+    elif message.reply_to_message:
+        # Check route
+        reply_id = message.reply_to_message.message_id
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(MessageRoute).where(MessageRoute.admin_message_id == reply_id))
+            route = result.scalar_one_or_none()
+            if route:
+                target_id = route.user_id
+
+    if not target_id:
+        await message.answer("⚠️ Usage: /unban <user_id> or reply to a user message.")
+        return
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(update(User).where(User.id == target_id).values(is_banned=False))
+        await session.commit()
+    
+    await message.answer(f"✅ User {target_id} has been unbanned.")
+
 # ---------- Message Forwarding (User -> Admin) ----------
 @router.message(F.chat.type == "private")
 async def handle_user_message(message: Message):
@@ -99,7 +153,8 @@ async def handle_user_message(message: Message):
         result = await session.execute(select(User).where(User.id == message.from_user.id))
         user = result.scalar_one_or_none()
         
-    if not user or not user.is_verified:
+    # Verification Check
+    if message.from_user.id != settings.ADMIN_ID and (not user or not user.is_verified):
         await message.answer("Please type /start to verify yourself first.")
         return
         

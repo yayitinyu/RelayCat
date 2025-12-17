@@ -11,6 +11,15 @@ from app.database.core import init_db
 # Import handlers to register them
 import app.bot.handlers
 from app.web.routes import router as web_router
+from aiogram.types import BotCommand
+
+async def setup_bot_commands():
+    commands = [
+        BotCommand(command="start", description="Start interaction"),
+        BotCommand(command="ban", description="[Admin] Ban user"),
+        BotCommand(command="unban", description="[Admin] Unban user"),
+    ]
+    await bot.set_my_commands(commands)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,6 +31,7 @@ app.include_router(web_router)
 async def on_startup():
     logger.info("Starting RelayCat...")
     await init_db()
+    await setup_bot_commands()
     
     # Start Bot Polling as a background task
     # In production with detailed webhooks, implementation differs.
