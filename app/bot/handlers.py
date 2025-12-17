@@ -4,13 +4,14 @@ from aiogram.types import Message, CallbackQuery, Chat
 from sqlalchemy.future import select
 from sqlalchemy import update
 
-from app.bot.loader import bot
+from app.bot.loader import bot, dp
 from app.settings import settings
 from app.database.core import AsyncSessionLocal
 from app.database.models import User, MessageRoute
 from app.bot.verification import generate_verification_challenge
 
 router = Router()
+dp.include_router(router)
 
 from aiogram.types import User as TgUser
 
