@@ -43,6 +43,9 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
         user_count = await session.scalar(select(func.count(User.id)))
         msg_count = await session.scalar(select(func.count(MessageRoute.id)))
         
+        user_count = user_count or 0
+        msg_count = msg_count or 0
+
         # Recent users
         result = await session.execute(select(User).order_by(User.created_at.desc()).limit(10))
         users = result.scalars().all()
