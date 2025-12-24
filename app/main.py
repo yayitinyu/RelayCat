@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uvicorn
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from aiogram import types
 from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -25,6 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="RelayCat Admin")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(web_router)
 
 @app.on_event("startup")

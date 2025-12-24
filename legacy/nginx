@@ -1,6 +1,0 @@
-# 拦截 JSON/TMP 等状态文件的直接下载
-location ~* \.(json|tmp)$ {
-    deny all;
-    access_log off;
-    log_not_found off;
-}
