@@ -84,6 +84,41 @@ async def on_verify_callback(callback: CallbackQuery):
             reply_markup=markup
         )
 
+
+async def get_reply_target_id(message: Message) -> int | None:
+    """
+    Try to find the target user ID from a reply message.
+    1. Check MessageRoute in DB (most reliable for active sessions)
+    2. Check Info Card text (stateless fallback)
+    3. Check Forward Origin (stateless fallback for forwards)
+    """
+    reply_msg = message.reply_to_message
+    if not reply_msg:
+        return None
+
+    # 1. Check DB Route
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(MessageRoute).where(MessageRoute.admin_message_id == reply_msg.message_id)
+        )
+        route = result.scalar_one_or_none()
+        if route:
+            return route.user_id
+
+    # 2. Check Info Card Text (e.g. "ID: 123456")
+    text = reply_msg.text or reply_msg.caption or ""
+    # Look for "ID: 123456" pattern
+    match = re.search(r"ID:\s*(\d+)", text)
+    if match:
+        return int(match.group(1))
+
+    # 3. Check Forward Origin
+    # Check if the message is a forward from a user
+    if reply_msg.forward_origin and getattr(reply_msg.forward_origin, 'type', '') == 'user':
+        return reply_msg.forward_origin.sender_user.id
+        
+    return None
+
 # ---------- Admin Commands ----------
 @router.message(Command("ban"), F.from_user.id == settings.ADMIN_ID)
 async def cmd_ban(message: Message):
@@ -94,13 +129,7 @@ async def cmd_ban(message: Message):
     if len(args) > 1 and args[1].isdigit():
         target_id = int(args[1])
     elif message.reply_to_message:
-        # Check route
-        reply_id = message.reply_to_message.message_id
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(select(MessageRoute).where(MessageRoute.admin_message_id == reply_id))
-            route = result.scalar_one_or_none()
-            if route:
-                target_id = route.user_id
+        target_id = await get_reply_target_id(message)
     
     if not target_id:
         await message.answer("⚠️ Usage: /ban <user_id> or reply to a user message.")
@@ -120,13 +149,7 @@ async def cmd_unban(message: Message):
     if len(args) > 1 and args[1].isdigit():
         target_id = int(args[1])
     elif message.reply_to_message:
-        # Check route
-        reply_id = message.reply_to_message.message_id
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(select(MessageRoute).where(MessageRoute.admin_message_id == reply_id))
-            route = result.scalar_one_or_none()
-            if route:
-                target_id = route.user_id
+        target_id = await get_reply_target_id(message)
 
     if not target_id:
         await message.answer("⚠️ Usage: /unban <user_id> or reply to a user message.")
@@ -235,20 +258,16 @@ async def handle_user_message(message: Message):
 # ---------- Admin Reply (Admin -> User) ----------
 async def handle_admin_reply(message: Message):
     # Check if reply is to a routed message
-    reply_id = message.reply_to_message.message_id
-    
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(MessageRoute).where(MessageRoute.admin_message_id == reply_id))
-        route = result.scalar_one_or_none()
+    user_id = await get_reply_target_id(message)
         
-    if not route:
+    if not user_id:
         await message.answer("⚠️ Route not found. Cannot reply to this message.")
         return
         
     # Send back to user
     try:
         # We use copy_message to preserve content type (text/photo/etc)
-        await message.copy_to(chat_id=route.user_id)
+        await message.copy_to(chat_id=user_id)
         
         # Confirm Reply (Thumps Up) if enabled
         async with AsyncSessionLocal() as session:
