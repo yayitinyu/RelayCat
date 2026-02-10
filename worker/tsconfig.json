@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "es2021",
+    "lib": ["es2021", "webworker"], // 'webworker' includes D1Database etc.
+    "module": "es2022",
+    "moduleResolution": "node",
+    "types": ["@cloudflare/workers-types"],
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"]
+}
