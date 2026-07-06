@@ -1,146 +1,50 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="glass-card">
-    <h2 style="margin-top: 0; color: var(--deep-pink);">🛡️ 规则管理</h2>
+<section class="page-heading compact">
+    <div><p class="eyebrow">Message hygiene</p><h1>过滤规则</h1><p>使用正则表达式控制中继消息；规则按列表顺序匹配，首个命中结果生效。</p></div>
+</section>
 
-    <div style="background: rgba(255,255,255,0.4); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-        <h4>➕ 添加新规则 (正则)</h4>
-        <form action="/rules/add" method="post" style="display: flex; gap: 10px; flex-wrap: wrap;">
-            <select name="rule_type" style="padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
-                <option value="message_content">消息内容</option>
-                <option value="username">用户名</option>
-                <option value="is_command">是否为命令</option>
-                <option value="is_forwarded">是否为转发</option>
-            </select>
-            <input type="text" name="pattern" placeholder="正则模式 (例如: ^/start)" required
-                style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
-            <select name="action" style="padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
-                <option value="block">拦截 (提示)</option>
-                <option value="drop">丢弃 (静默)</option>
-                <option value="allow">放行 (白名单)</option>
-            </select>
-            <button type="submit" class="btn">添加</button>
-        </form>
+{% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="panel rule-builder" aria-labelledby="new-rule-title">
+    <div><p class="section-kicker">New rule</p><h2 id="new-rule-title">添加规则</h2></div>
+    <form action="/rules/add" method="post" class="rule-form">
+        <label>匹配字段<select name="rule_type"><option value="message_content">消息内容</option><option value="username">用户名</option><option value="is_command">命令</option><option value="is_forwarded">转发消息</option></select></label>
+        <label class="grow">正则表达式<input type="text" name="pattern" maxlength="500" required placeholder="例如：(广告|推广)"></label>
+        <label>命中动作<select name="action"><option value="block">拦截并提示</option><option value="drop">静默丢弃</option><option value="allow">直接放行</option></select></label>
+        <button type="submit" class="button button-primary">添加</button>
+    </form>
+</section>
+
+<section class="panel data-panel" aria-labelledby="rule-list-title">
+    <div class="panel-heading"><div><p class="section-kicker">Rule set</p><h2 id="rule-list-title">现有规则</h2></div><span class="quiet">{{ rules|length }} 条</span></div>
+    {% if rules %}
+    <div class="rule-list">
+        {% for rule in rules %}
+        <article class="rule-item {% if not rule.is_active %}is-muted{% endif %}">
+            <div class="rule-summary">
+                <span class="status {% if rule.is_active %}status-ok{% endif %}">{% if rule.is_active %}运行中{% else %}已停用{% endif %}</span>
+                <div><strong>{{ {'message_content':'消息内容','username':'用户名','is_command':'命令','is_forwarded':'转发消息'}.get(rule.rule_type, rule.rule_type) }}</strong><code>{{ rule.pattern }}</code></div>
+                <span class="rule-action">{{ {'block':'拦截','drop':'丢弃','allow':'放行'}.get(rule.action, rule.action) }}</span>
+            </div>
+            <div class="rule-controls">
+                <form action="/rules/toggle" method="post"><input type="hidden" name="rule_id" value="{{ rule.id }}"><button class="table-action" type="submit">{% if rule.is_active %}停用{% else %}启用{% endif %}</button></form>
+                <details>
+                    <summary>编辑</summary>
+                    <form action="/rules/update" method="post" class="inline-edit">
+                        <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                        <select name="rule_type"><option value="message_content" {% if rule.rule_type == 'message_content' %}selected{% endif %}>消息内容</option><option value="username" {% if rule.rule_type == 'username' %}selected{% endif %}>用户名</option><option value="is_command" {% if rule.rule_type == 'is_command' %}selected{% endif %}>命令</option><option value="is_forwarded" {% if rule.rule_type == 'is_forwarded' %}selected{% endif %}>转发消息</option></select>
+                        <input type="text" name="pattern" value="{{ rule.pattern }}" maxlength="500" required>
+                        <select name="action"><option value="block" {% if rule.action == 'block' %}selected{% endif %}>拦截</option><option value="drop" {% if rule.action == 'drop' %}selected{% endif %}>丢弃</option><option value="allow" {% if rule.action == 'allow' %}selected{% endif %}>放行</option></select>
+                        <button class="button button-primary" type="submit">保存</button>
+                    </form>
+                </details>
+                <form action="/rules/delete" method="post"><input type="hidden" name="rule_id" value="{{ rule.id }}"><button class="table-action danger" type="submit">删除</button></form>
+            </div>
+        </article>
+        {% endfor %}
     </div>
-
-    <div style="overflow-x: auto;">
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>类型</th>
-                    <th>模式</th>
-                    <th>动作</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for rule in rules %}
-                <tr>
-                    <td>{{ rule.id }}</td>
-                    <td>{{ rule.rule_type }}</td>
-                    <td><code style="background: #eee; padding: 2px 5px;">{{ rule.pattern }}</code></td>
-                    <td>
-                        {% if rule.action == 'block' %}<span style="color:red">拦截</span>
-                        {% elif rule.action == 'drop' %}<span style="color:gray">丢弃</span>
-                        {% else %}<span style="color:green">放行</span>{% endif %}
-                    </td>
-                    <td>
-                        <form action="/rules/toggle" method="post" style="display:inline;">
-                            <input type="hidden" name="rule_id" value="{{ rule.id }}">
-                            {% if rule.is_active %}
-                            <button type="submit"
-                                style="background: none; border: none; cursor: pointer; font-size: 1.2em;"
-                                title="点击禁用">✅</button>
-                            {% else %}
-                            <button type="submit"
-                                style="background: none; border: none; cursor: pointer; font-size: 1.2em;"
-                                title="点击启用">❌</button>
-                            {% endif %}
-                        </form>
-                    </td>
-                    <td>
-                        <button class="btn"
-                            style="padding: 5px 10px; font-size: 0.8em; background: linear-gradient(45deg, #a8edea, #fed6e3); color: #555;"
-                            onclick="openEditModal('{{ rule.id }}', '{{ rule.rule_type }}', '{{ rule.pattern }}', '{{ rule.action }}')">
-                            编辑
-                        </button>
-                        <form action="/rules/delete" method="post" style="display:inline;">
-                            <input type="hidden" name="rule_id" value="{{ rule.id }}">
-                            <button type="submit" class="btn btn-danger"
-                                style="padding: 5px 10px; font-size: 0.8em;">删除</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<!-- Edit Modal -->
-<div id="editModal"
-    style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
-    <div class="glass-card" style="background: rgba(255, 255, 255, 0.9); width: 90%; max-width: 500px;">
-        <h3 style="margin-top: 0;">编辑规则</h3>
-        <form action="/rules/update" method="post">
-            <input type="hidden" id="edit_rule_id" name="rule_id">
-
-            <div style="margin-bottom: 15px;">
-                <label>类型:</label><br>
-                <select id="edit_rule_type" name="rule_type" style="width: 100%; padding: 8px; margin-top: 5px;">
-                    <option value="message_content">消息内容</option>
-                    <option value="username">用户名</option>
-                    <option value="is_command">是否为命令</option>
-                    <option value="is_forwarded">是否为转发</option>
-                </select>
-            </div>
-
-            <div style="margin-bottom: 15px;">
-                <label>模式:</label><br>
-                <input type="text" id="edit_pattern" name="pattern" required
-                    style="width: 95%; padding: 8px; margin-top: 5px;">
-            </div>
-
-            <div style="margin-bottom: 20px;">
-                <label>动作:</label><br>
-                <select id="edit_action" name="action" style="width: 100%; padding: 8px; margin-top: 5px;">
-                    <option value="block">拦截 (提示)</option>
-                    <option value="drop">丢弃 (静默)</option>
-                    <option value="allow">放行 (白名单)</option>
-                </select>
-            </div>
-
-            <div style="text-align: right;">
-                <button type="button" class="btn" onclick="closeEditModal()"
-                    style="background: #ccc; margin-right: 10px;">取消</button>
-                <button type="submit" class="btn">保存</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<script>
-    function openEditModal(id, type, pattern, action) {
-        document.getElementById('edit_rule_id').value = id;
-        document.getElementById('edit_rule_type').value = type;
-        document.getElementById('edit_pattern').value = pattern;
-        document.getElementById('edit_action').value = action;
-
-        document.getElementById('editModal').style.display = 'flex';
-    }
-
-    function closeEditModal() {
-        document.getElementById('editModal').style.display = 'none';
-    }
-
-    // Close if clicked outside
-    window.onclick = function (event) {
-        if (event.target == document.getElementById('editModal')) {
-            closeEditModal();
-        }
-    }
-</script>
+    {% else %}<div class="empty-state"><strong>暂时没有规则</strong><p>添加第一条规则来过滤垃圾消息。</p></div>{% endif %}
+</section>
 {% endblock %}

@@ -1,25 +1,43 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="glass-card">
-    <h2 style="margin-top: 0; color: var(--deep-pink);">⚙️ 系统设置</h2>
+<section class="page-heading compact">
+    <div><p class="eyebrow">Automation</p><h1>自动化设置</h1><p>控制管理员回执，以及代表 Telegram Business 账号回复消息的 AI 助理。</p></div>
+</section>
 
-    <form action="/settings/update" method="post">
-        <div style="margin-bottom: 20px;">
-            <label
-                style="display: flex; align-items: center; justify-content: space-between; padding: 15px; background: rgba(255,255,255,0.5); border-radius: 10px;">
-                <div>
-                    <strong style="font-size: 1.1em;">👍 启用回复确认</strong>
-                    <div style="font-size: 0.9em; color: #666; margin-top: 5px;">管理员回复用户后，在原转发消息下自动点赞 (👍) 以确认。</div>
-                </div>
-                <input type="checkbox" name="confirm_reply" value="true" {% if confirm_reply %}checked{% endif %}
-                    style="transform: scale(1.5);">
+{% if request.query_params.get('saved') %}<div class="notice notice-success" role="status">设置已保存。</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="notice notice-error" role="alert">{{ request.query_params.get('error') }}</div>{% endif %}
+
+<form action="/settings/update" method="post" class="settings-layout">
+    <section class="panel settings-main" aria-labelledby="business-title">
+        <div class="panel-heading">
+            <div><p class="section-kicker">Secretary bot</p><h2 id="business-title">Business AI 助理</h2></div>
+            <label class="switch"><input type="checkbox" name="business_ai_enabled" value="true" {% if business_ai_enabled %}checked{% endif %}><span aria-hidden="true"></span><b>启用</b></label>
+        </div>
+        <p class="field-help">仅处理通过 Telegram Business 连接收到的私聊文本。账号本人发出的消息不会触发自动回复。</p>
+        <label for="business_ai_prompt">系统提示词</label>
+        <textarea id="business_ai_prompt" name="business_ai_prompt" rows="10" maxlength="4000" required>{{ business_ai_prompt }}</textarea>
+        <div class="prompt-meta"><span>定义语气、职责和不能做的事</span><span>最多 4000 字符</span></div>
+    </section>
+
+    <aside class="settings-side">
+        <section class="panel compact-panel">
+            <p class="section-kicker">Provider</p>
+            <h2>AI 接口</h2>
+            <dl class="key-values">
+                <div><dt>状态</dt><dd><span class="status {% if ai_configured %}status-ok{% else %}status-danger{% endif %}">{% if ai_configured %}已配置密钥{% else %}缺少密钥{% endif %}</span></dd></div>
+                <div><dt>模型</dt><dd><code>{{ ai_model }}</code></dd></div>
+                <div><dt>Base URL</dt><dd class="break-word">{{ ai_base_url }}</dd></div>
+            </dl>
+            <p class="field-help">密钥只从 <code>RELAYCAT_AI_API_KEY</code> 读取，不会保存到数据库或显示在页面中。</p>
+        </section>
+        <section class="panel compact-panel">
+            <label class="setting-row">
+                <span><strong>管理员回复回执</strong><small>回复成功后为原消息添加 👍</small></span>
+                <span class="switch"><input type="checkbox" name="confirm_reply" value="true" {% if confirm_reply %}checked{% endif %}><span aria-hidden="true"></span></span>
             </label>
-        </div>
-
-        <div style="text-align: right;">
-            <button type="submit" class="btn">💾 保存设置</button>
-        </div>
-    </form>
-</div>
+        </section>
+        <button type="submit" class="button button-primary button-block">保存设置</button>
+    </aside>
+</form>
 {% endblock %}

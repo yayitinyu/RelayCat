@@ -1,1 +1,13 @@
-
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+data/
+*.db
+*.db-shm
+*.db-wal
+.wrangler/
+node_modules/
