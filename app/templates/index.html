@@ -1,61 +1,69 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 30px;">
-    <div class="glass-card stat-card" style="flex: 1; text-align: center;">
-        <h3 style="margin: 0; color: #777;">总用户数</h3>
-        <p style="font-size: 2.5em; margin: 10px 0; color: var(--deep-pink); font-weight: bold;">{{ user_count }}</p>
+<section class="page-heading">
+    <div>
+        <p class="eyebrow">Overview</p>
+        <h1>今天也在认真收消息。</h1>
+        <p>中继状态、Business 连接和最近访客都在这里。</p>
     </div>
-    <div class="glass-card stat-card" style="flex: 1; text-align: center;">
-        <h3 style="margin: 0; color: #777;">处理消息</h3>
-        <p style="font-size: 2.5em; margin: 10px 0; color: #66ccff; font-weight: bold;">{{ msg_count }}</p>
-    </div>
-</div>
+    <a class="button button-secondary" href="/settings">配置自动回复</a>
+</section>
 
-<div class="glass-card">
-    <h2 style="margin-top: 0; margin-bottom: 20px; border-left: 5px solid var(--deep-pink); padding-left: 10px;">👤
-        最近用户访问</h2>
-    <div style="overflow-x: auto;">
+<section class="stats-grid" aria-label="服务统计">
+    <article class="stat-card stat-primary">
+        <span>累计用户</span>
+        <strong>{{ user_count }}</strong>
+        <small>已与 Bot 建立会话</small>
+    </article>
+    <article class="stat-card">
+        <span>中继记录</span>
+        <strong>{{ msg_count }}</strong>
+        <small>管理员侧消息路由</small>
+    </article>
+    <article class="stat-card">
+        <span>Business 连接</span>
+        <strong>{{ business_count }}</strong>
+        <small>当前启用的账号自动化</small>
+    </article>
+</section>
+
+<section class="panel data-panel" aria-labelledby="recent-users-title">
+    <div class="panel-heading">
+        <div>
+            <p class="section-kicker">Recent contacts</p>
+            <h2 id="recent-users-title">最近用户</h2>
+        </div>
+        <span class="quiet">最多显示 10 位</span>
+    </div>
+    {% if users %}
+    <div class="table-wrap">
         <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>昵称</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                </tr>
-            </thead>
+            <thead><tr><th>用户</th><th>Telegram ID</th><th>验证</th><th class="align-right">操作</th></tr></thead>
             <tbody>
-                {% for user in users %}
+            {% for user in users %}
                 <tr>
-                    <td><code
-                            style="background: rgba(255,255,255,0.5); padding: 2px 5px; border-radius: 4px;">{{ user.id }}</code>
-                    </td>
-                    <td>{{ user.first_name }}</td>
+                    <td><strong>{{ user.first_name or '未命名用户' }}</strong><small>@{{ user.username or '无用户名' }}</small></td>
+                    <td><code>{{ user.id }}</code></td>
                     <td>
-                        {% if user.is_verified %}<span style="color: green;">✅ 已验证</span>
-                        {% else %}<span style="color: #aaa;">⚪ 未验证</span>{% endif %}
+                        {% if user.is_banned %}<span class="status status-danger">已封禁</span>
+                        {% elif user.is_verified %}<span class="status status-ok">已验证</span>
+                        {% else %}<span class="status">待验证</span>{% endif %}
                     </td>
-                    <td>
+                    <td class="align-right">
                         {% if user.is_banned %}
-                        <span style="color: red; font-weight: bold;">🚫 Banned</span>
-                        <form action="/unban_user" method="post" style="display:inline;">
-                            <input type="hidden" name="user_id" value="{{ user.id }}">
-                            <button type="submit" class="btn btn-danger"
-                                style="padding: 2px 8px; font-size: 0.8em;">解封</button>
-                        </form>
+                        <form method="post" action="/users/unban"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action" type="submit">解除封禁</button></form>
                         {% else %}
-                        <form action="/ban_user" method="post" style="display:inline;">
-                            <input type="hidden" name="user_id" value="{{ user.id }}">
-                            <button type="submit" class="btn btn-danger"
-                                style="padding: 2px 8px; font-size: 0.8em; background: #ffdede; color: red; box-shadow: none;">封禁</button>
-                        </form>
+                        <form method="post" action="/users/ban"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action danger" type="submit">封禁</button></form>
                         {% endif %}
                     </td>
                 </tr>
-                {% endfor %}
+            {% endfor %}
             </tbody>
         </table>
     </div>
-</div>
+    {% else %}
+    <div class="empty-state"><strong>还没有访客</strong><p>用户完成首次验证后会出现在这里。</p></div>
+    {% endif %}
+</section>
 {% endblock %}

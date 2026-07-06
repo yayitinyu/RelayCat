@@ -1,37 +1,54 @@
-import os
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
-from sqlalchemy.future import select
+import logging
+from pathlib import Path
 
-from app.settings import settings
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.core.config import settings
 from app.database.models import Base, Rule
 
-# Configuration
-DATA_DIR = os.getenv("RELAYCAT_DATA_DIR", "./data")
-os.makedirs(DATA_DIR, exist_ok=True)
+logger = logging.getLogger(__name__)
 
-DB_URL = os.getenv("RELAYCAT_DB_URL", f"sqlite+aiosqlite:///{DATA_DIR}/relaycat.db")
+if settings.database_url.startswith("sqlite"):
+    Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
 
-engine = create_async_engine(DB_URL, echo=False)
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+engine = create_async_engine(settings.database_url, echo=False)
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    expire_on_commit=False,
+    class_=AsyncSession,
+)
 
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    
-    # Seed Rules
+
+async def init_db() -> None:
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Rule).limit(1))
-        if not result.scalar_one_or_none():
-            default_rules = [
-                Rule(rule_type="message_content", pattern=r"(兼职|刷单|日结|加V|VX|微信|卖茶|投资|理财|USDT|BTC)", action="block"),
-                Rule(rule_type="message_content", pattern=r"(http|https)://(t\.me|telegram\.me)/", action="block"),
-                Rule(rule_type="username", pattern=r"(bot|admin|support|service)", action="block"),
-            ]
-            session.add_all(default_rules)
+        result = await session.execute(select(Rule.id).limit(1))
+        if result.scalar_one_or_none() is None:
+            session.add_all(
+                [
+                    Rule(
+                        rule_type="message_content",
+                        pattern=r"(兼职|刷单|日结|加V|VX|微信|卖茶|投资|理财|USDT|BTC)",
+                        action="block",
+                    ),
+                    Rule(
+                        rule_type="message_content",
+                        pattern=r"(http|https)://(t\.me|telegram\.me)/",
+                        action="block",
+                    ),
+                    Rule(
+                        rule_type="username",
+                        pattern=r"(bot|admin|support|service)",
+                        action="block",
+                    ),
+                ]
+            )
             await session.commit()
-            print("✅ Default rules seeded.")
+            logger.info("Default filtering rules created")
+
 
 async def get_db():
     async with AsyncSessionLocal() as session:

@@ -1,20 +1,26 @@
-version: '3.8'
-
 services:
   relaycat:
-    build: .
-    restart: always
+    image: ghcr.io/yayitinyu/relaycat:latest
+    build:
+      context: .
+    restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${RELAYCAT_PORT:-8765}:${RELAYCAT_PORT:-8765}"
     volumes:
       - relaycat-data:/data
+    env_file:
+      - .env
     environment:
-      - RELAYCAT_BOT_TOKEN=${RELAYCAT_BOT_TOKEN}
-      - RELAYCAT_ADMIN_ID=${RELAYCAT_ADMIN_ID}
-      - RELAYCAT_ADMIN_PASSWORD=${RELAYCAT_ADMIN_PASSWORD:-admin}
-      - RELAYCAT_SECRET_KEY=${RELAYCAT_SECRET_KEY:-change_me}
-      - RELAYCAT_DB_URL=sqlite+aiosqlite:////data/relaycat.db
-      # - RELAYCAT_DB_URL=postgresql+asyncpg://user:password@host:port/dbname
+      RELAYCAT_HOST: 0.0.0.0
+      RELAYCAT_PORT: ${RELAYCAT_PORT:-8765}
+      RELAYCAT_DATA_DIR: /data
+      RELAYCAT_DB_URL: sqlite+aiosqlite:////data/relaycat.db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('RELAYCAT_PORT','8765') + '/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   relaycat-data:

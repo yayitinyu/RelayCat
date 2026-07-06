@@ -1,20 +1,22 @@
-from aiogram import Router, F, Bot, types
+import html
+import logging
+import re
+
+from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, CallbackQuery, Chat, ReactionTypeEmoji
+from aiogram.types import CallbackQuery, Message, ReactionTypeEmoji
+from aiogram.types import User as TgUser
 from sqlalchemy.future import select
 from sqlalchemy import update
 
 from app.bot.loader import bot, dp
-from app.settings import settings
+from app.core.config import settings
 from app.database.core import AsyncSessionLocal
 from app.database.models import User, MessageRoute, Rule, Setting
 from app.bot.verification import generate_verification_challenge
-import re
-
 router = Router()
 dp.include_router(router)
-
-from aiogram.types import User as TgUser
+logger = logging.getLogger(__name__)
 
 async def get_or_create_user(tg_user: TgUser):
     async with AsyncSessionLocal() as session:
@@ -40,7 +42,7 @@ async def cmd_start(message: Message):
 
     user = await get_or_create_user(message.from_user)
     
-    if user.is_verified or message.from_user.id == settings.ADMIN_ID:
+    if user.is_verified or message.from_user.id == settings.admin_id:
         await message.answer("Hello again! You are verified. Messages you send here will be forwarded to the admin.")
     else:
         # Start verification
@@ -120,7 +122,7 @@ async def get_reply_target_id(message: Message) -> int | None:
     return None
 
 # ---------- Admin Commands ----------
-@router.message(Command("ban"), F.from_user.id == settings.ADMIN_ID)
+@router.message(Command("ban"), F.from_user.id == settings.admin_id)
 async def cmd_ban(message: Message):
     # Extract ID from args or reply
     target_id = None
@@ -141,7 +143,7 @@ async def cmd_ban(message: Message):
     
     await message.answer(f"🔒 User {target_id} has been banned.")
 
-@router.message(Command("unban"), F.from_user.id == settings.ADMIN_ID)
+@router.message(Command("unban"), F.from_user.id == settings.admin_id)
 async def cmd_unban(message: Message):
     target_id = None
     args = message.text.split()
@@ -163,12 +165,8 @@ async def cmd_unban(message: Message):
 
 async def check_rules(message: Message, user: User) -> str:
     """Returns 'allow', 'block', or 'drop'"""
-    # 1. Default Policy: Block non-admin commands
-    if message.text and message.text.startswith("/") and message.from_user.id != settings.ADMIN_ID:
-        return "drop" # Silent drop for commands
-
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Rule).where(Rule.is_active == True))
+        result = await session.execute(select(Rule).where(Rule.is_active.is_(True)))
         rules = result.scalars().all()
     
     for rule in rules:
@@ -176,23 +174,37 @@ async def check_rules(message: Message, user: User) -> str:
         try:
             if rule.rule_type == "message_content":
                 text = message.text or message.caption or ""
-                if re.search(rule.pattern, text): matched = True
+                if re.search(rule.pattern, text):
+                    matched = True
             elif rule.rule_type == "username":
-                if re.search(rule.pattern, user.username or ""): matched = True
+                if re.search(rule.pattern, user.username or ""):
+                    matched = True
+            elif rule.rule_type == "is_command":
+                text = message.text or ""
+                if text.startswith("/") and re.search(rule.pattern, text):
+                    matched = True
             elif rule.rule_type == "is_forwarded":
-                 if message.forward_origin and rule.pattern == "true": matched = True
-        except Exception:
-            continue # Invalid regex
+                if message.forward_origin and rule.pattern.lower() == "true":
+                    matched = True
+        except re.error:
+            logger.warning("Skipping invalid regex in rule %s", rule.id)
+            continue
 
         if matched:
             return rule.action
-            
+
+    if (
+        message.text
+        and message.text.startswith("/")
+        and message.from_user.id != settings.admin_id
+    ):
+        return "drop"
     return "allow"
 
 # ---------- Message Forwarding (User -> Admin) ----------
 @router.message(F.chat.type == "private")
 async def handle_user_message(message: Message):
-    if message.from_user.id == settings.ADMIN_ID:
+    if message.from_user.id == settings.admin_id:
         if message.reply_to_message:
             await handle_admin_reply(message)
         return
@@ -203,7 +215,7 @@ async def handle_user_message(message: Message):
         user = result.scalar_one_or_none()
         
     # Verification Check
-    if message.from_user.id != settings.ADMIN_ID and (not user or not user.is_verified):
+    if message.from_user.id != settings.admin_id and (not user or not user.is_verified):
         await message.answer("Please type /start to verify yourself first.")
         return
         
@@ -212,9 +224,14 @@ async def handle_user_message(message: Message):
 
     # Rule Check
     action = await check_rules(message, user)
-    if action == "drop": return
+    if action == "drop":
+        return
     if action == "block":
         await message.answer("🚫 Message blocked by filter.")
+        return
+
+    if not settings.enable_forwarding:
+        await message.answer("Message forwarding is temporarily disabled.")
         return
 
     # Forward to Admin
@@ -223,17 +240,17 @@ async def handle_user_message(message: Message):
     
     try:
         # Forward original
-        fwd = await message.forward(settings.ADMIN_ID)
+        fwd = await message.forward(settings.admin_id)
         
         # Send info card
         info_text = (
             f"👤 <b>User Info</b>\n"
             f"ID: <code>{user.id}</code>\n"
-            f"Name: {user.first_name} {user.last_name or ''}\n"
-            f"Username: @{user.username or 'none'}\n"
+            f"Name: {html.escape(user.first_name or '')} {html.escape(user.last_name or '')}\n"
+            f"Username: @{html.escape(user.username or 'none')}\n"
             f"<i>Reply to this or the forwarded message to answer.</i>"
         )
-        card = await bot.send_message(settings.ADMIN_ID, info_text, reply_to_message_id=fwd.message_id)
+        card = await bot.send_message(settings.admin_id, info_text, reply_to_message_id=fwd.message_id)
         
         # Save route
         async with AsyncSessionLocal() as session:
@@ -251,9 +268,8 @@ async def handle_user_message(message: Message):
             ))
             await session.commit()
             
-    except Exception as e:
-        # Admin might have blocked bot
-        print(f"Error forwarding: {e}")
+    except Exception:
+        logger.exception("Failed to forward message %s", message.message_id)
 
 # ---------- Admin Reply (Admin -> User) ----------
 async def handle_admin_reply(message: Message):

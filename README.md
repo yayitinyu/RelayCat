@@ -1,122 +1,204 @@
-# RelayCat (Python Version)
+# RelayCat
 
-> 一个用于 Telegram 的轻量级“双向消息中继 Bot”，主打：**双向转发、防骚扰、Web 管理面板、免 reCAPTCHA**
+轻量的 Telegram 双向消息中继与 Business AI 聊天助理。用户可以给 Bot 发消息，由管理员在 Telegram 内直接回复；也可以把 Bot 连接到 Telegram Business 账号，让它代表账号处理私聊并通过 OpenAI-compatible API 自动回复。
 
-RelayCat 是一个基于 Python (Aiogram + FastAPI) 重写的 Telegram 机器人，用于将用户私聊消息转发给管理员，支持管理员直接回复。
+[English](./README_en.md)
 
-[English Version](./README_en.md)
+![RelayCat logo](./app/static/images/relaycat-logo.png)
 
----
+## 功能
 
-## 🚀 特性
+- 双向消息中继：支持文本、图片、文件、贴纸等 Telegram 消息类型。
+- 原生人机验证：首次会话通过 Emoji 按钮完成验证，无需 reCAPTCHA。
+- Telegram Business 自动化：Bot 可作为 Connected Business Bot 代表账号回复私聊。
+- AI 自动回复：兼容 OpenAI Chat Completions 格式，可自定义 Base URL、模型与系统提示词。
+- 消息过滤：按消息内容、用户名、命令或转发状态执行正则规则。
+- Web 管理后台：查看统计、封禁用户、管理规则和 AI 提示词。
+- 轻量持久化：默认使用 SQLite，也可切换 PostgreSQL。
+- Docker / GHCR：自动发布 `ghcr.io/yayitinyu/relaycat:latest`，同时保留 `sha-*` 回滚标签。
 
-- **双向消息中继**
-  - 用户私聊 Bot，消息自动转发给管理员。
-  - 管理员回复转发的消息（或信息卡片），内容自动发回给用户。
-  - 支持文本、图片、文件、贴纸等多种消息类型。
+## 快速部署
 
-- **原生防骚扰验证 (无 reCAPTCHA)**
-  - 摒弃了复杂的网页 reCAPTCHA。
-  - 采用 **Telegram 原生 In-Chat 验证**（Emoji 点击挑战）。
-  - 用户首次使用时需点击正确的 Emoji 进行人机验证，体验更流畅。
+### 1. 准备配置
 
-- **Web 管理面板**
-  - 内置 FastAPI 管理后台。
-  - **仪表盘**：查看用户总数、消息统计。
-  - **用户管理**：查看最近用户，一键封禁/解封。
-  - 默认地址：`http://localhost:8080/`
+```bash
+cp .env.example .env
+```
 
-- **数据持久化**
-  - 默认使用 **SQLite** (`relaycat.db`)，无需配置额外数据库。
-  - 支持通过 SQLAlchemy 切换到 **PostgreSQL** 或 MySQL。
+至少修改以下配置：
 
-- **Docker 一键部署**
-  - 提供 `docker-compose.yml`，开箱即用。
+```dotenv
+RELAYCAT_BOT_TOKEN=123456789:your-bot-token
+RELAYCAT_ADMIN_ID=123456789
+RELAYCAT_ADMIN_PASSWORD=your-strong-password
+RELAYCAT_SECRET_KEY=your-long-random-secret
+RELAYCAT_PORT=8765
+```
 
----
+`RELAYCAT_PORT` 同时控制应用监听端口和 Docker 主机映射。若 `8765` 被占用，改成例如 `9180` 即可，不需要修改代码或 Compose 文件。
 
-## 🛠️ 快速开始 (Docker)
+可以用下面的命令生成随机 `SECRET_KEY`：
 
-1. **克隆项目**
-   ```bash
-   git clone https://github.com/your-repo/RelayCat.git
-   cd RelayCat
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+### 2. 启动
+
+使用 GHCR 的 Latest 镜像：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+从本地源码构建：
+
+```bash
+docker compose up -d --build
+```
+
+打开 `http://服务器IP:8765/login`。如果修改过端口，请替换为新的端口。
+
+### 3. 检查状态
+
+```bash
+docker compose ps
+docker compose logs -f --tail=100 relaycat
+```
+
+健康检查地址为 `/healthz`。
+
+## Telegram Business / Secretary Bot
+
+RelayCat 使用 Telegram 官方的 Connected Business Bots，不会要求登录个人账号，也不需要保存手机号、验证码或用户会话。
+
+1. 在 `@BotFather` 中为 Bot 打开 **Business Mode**。
+2. 在支持 Telegram Business 的账号中打开 **设置 → Telegram Business → Chatbots**。
+3. 连接 RelayCat Bot，选择允许处理的聊天，并授予回复消息权限。
+4. 在 `.env` 中配置 AI API：
+
+   ```dotenv
+   RELAYCAT_AI_ENABLED=true
+   RELAYCAT_AI_BASE_URL=https://api.openai.com/v1
+   RELAYCAT_AI_API_KEY=your-api-key
+   RELAYCAT_AI_MODEL=gpt-4o-mini
    ```
 
-2. **配置环境变量**
-   修改 `docker-compose.yml` 或创建 `.env` 文件：
+5. 重启服务，在后台的「自动化设置」中确认 AI 状态，并编辑系统提示词。
 
-   ```yaml
-   environment:
-     - RELAYCAT_BOT_TOKEN=your_bot_token_here       # 你的 Bot Token
-     - RELAYCAT_ADMIN_ID=123456789                  # 你的 Telegram ID
-     - RELAYCAT_ADMIN_PASSWORD=secure_password      # 管理面板登录密码
-     - RELAYCAT_SECRET_KEY=change_me_to_random      # Session 加密密钥
-   ```
+```bash
+docker compose restart relaycat
+```
 
-3. **启动服务**
-   ```bash
-   docker compose up -d --build
-   ```
+当前自动回复范围：
 
-4. **开始使用**
-   - **Bot**: 给你的机器人发送 `/start`。
-   - **Admin Web**: 浏览器访问 `http://ip:8080/login` 进入管理面板。
+- 只处理 Connected Business Bot 收到的私聊文本或媒体 caption。
+- 账号本人发送的消息不会触发 AI，避免重复回复。
+- 同一聊天串行生成回复，并保存最近上下文到数据库。
+- API 超时、无权限或返回格式异常时只记录错误，不会把内部错误发给聊天对象。
+- Telegram 对 Business Bot 回复权限和可回复时间范围有平台限制。
 
----
+官方说明：[Connected Business Bots](https://core.telegram.org/api/bots/connected-business-bots) / [Bot API](https://core.telegram.org/bots/api#businessconnection)
 
-## ⚙️ 配置说明
+## 配置
 
-所有配置均通过环境变量管理（支持 `.env` 文件）。
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `RELAYCAT_BOT_TOKEN` | 无 | 必填，BotFather 提供的 Bot Token |
+| `RELAYCAT_ADMIN_ID` | 无 | 必填，管理员 Telegram 数字 ID |
+| `RELAYCAT_ADMIN_PASSWORD` | `admin` | 管理后台密码，生产环境必须修改 |
+| `RELAYCAT_SECRET_KEY` | 不安全的开发值 | Cookie 签名密钥，生产环境必须修改 |
+| `RELAYCAT_HOST` | `0.0.0.0` | Web 监听地址 |
+| `RELAYCAT_PORT` | `8765` | Web 监听与 Compose 映射端口 |
+| `RELAYCAT_COOKIE_SECURE` | `false` | 通过 HTTPS 访问时应设为 `true` |
+| `RELAYCAT_DATA_DIR` | `./data` | SQLite 数据目录 |
+| `RELAYCAT_DB_URL` | SQLite | SQLAlchemy 异步数据库 URL |
+| `RELAYCAT_ENABLE_FORWARDING` | `true` | 是否启用普通 Bot 消息中继 |
+| `RELAYCAT_DROP_PENDING_UPDATES` | `false` | 启动时是否丢弃 Telegram 未处理更新 |
+| `RELAYCAT_AI_ENABLED` | `false` | Business AI 默认开关，可在后台覆盖 |
+| `RELAYCAT_AI_BASE_URL` | OpenAI API | OpenAI-compatible API Base URL |
+| `RELAYCAT_AI_API_KEY` | 无 | AI API 密钥，只从环境变量读取 |
+| `RELAYCAT_AI_MODEL` | `gpt-4o-mini` | Chat Completions 模型名 |
+| `RELAYCAT_AI_SYSTEM_PROMPT` | 内置安全提示词 | AI 默认系统提示词，可在后台覆盖 |
+| `RELAYCAT_AI_TIMEOUT_SECONDS` | `30` | AI 请求超时秒数 |
+| `RELAYCAT_AI_HISTORY_LIMIT` | `12` | 每次生成携带的最近消息数，范围 2–50 |
 
-| 变量名 | 必填 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `RELAYCAT_BOT_TOKEN` | ✅ | - | Telegram Bot Token (从 @BotFather 获取) |
-| `RELAYCAT_ADMIN_ID` | ✅ | - | 管理员的数字 ID |
-| `RELAYCAT_ADMIN_PASSWORD` | ❌ | `admin` | Web 管理面板的登录密码 |
-| `RELAYCAT_SECRET_KEY` | ❌ | `change_me` |用于加密 Session Cookie 的密钥 |
-| `RELAYCAT_DB_URL` | ❌ | `sqlite+aiosqlite:////data/relaycat.db` | 数据库连接字符串 (支持 PostgreSql) |
-| `RELAYCAT_ENABLE_FORWARDING` | ❌ | `True` | 是否开启消息转发功能 |
+PostgreSQL 示例：
 
----
+```dotenv
+RELAYCAT_DB_URL=postgresql+asyncpg://relaycat:password@postgres:5432/relaycat
+```
 
-## 🧩 架构
+## 项目结构
 
-本项目从旧版 PHP 架构完全重写为现代 Python 异步架构：
+```text
+app/
+├── bot/                 # 普通中继、验证与 Business 自动化
+├── core/                # 环境配置和会话签名
+├── database/            # SQLAlchemy 模型与连接
+├── services/            # AI 客户端和运行时设置
+├── static/              # Logo 与后台样式
+├── templates/           # Jinja2 管理页面
+├── web/                 # 管理后台路由
+└── main.py              # FastAPI 与 Bot 生命周期入口
+```
 
-- **Bot 框架**: `aiogram 3.x` (异步高效)
-- **Web 框架**: `FastAPI` (用于管理面板)
-- **数据库 ORM**: `SQLAlchemy 2.0` (异步)
-- **运行器**: `uvicorn` (ASGI 服务器)
+FastAPI 和 aiogram polling 运行在同一 asyncio 进程中，适合低配 VPS。默认无需 Redis 或独立数据库服务。
 
-所有组件运行在同一个进程中（通过 asyncio 并发），既节省资源又方便部署。
+## 本地开发
 
----
+需要 Python 3.12+：
 
-## 📝 开发与运行 (非 Docker)
+```bash
+python -m venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env
+python -m app.main
+```
 
-如果你想在本地开发：
+修改代码后建议执行：
 
-1. **安装依赖**
-   (推荐使用 venv)
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+python -m compileall -q app
+python -m unittest discover -s tests -v
+docker compose config
+docker build -t relaycat:local .
+```
 
-2. **设置环境变量**
-   在项目根目录创建 `.env` 文件：
-   ```ini
-   RELAYCAT_BOT_TOKEN=xxx
-   RELAYCAT_ADMIN_ID=xxx
-   ```
+## 数据、备份与恢复
 
-3. **启动**
-   ```bash
-   python -m app.main
-   ```
+Compose 使用 `relaycat-data` volume 保存 SQLite，不会把数据只放在容器文件层。
 
----
+备份前先短暂停止服务，避免复制正在写入的 SQLite：
 
-## 📄 许可证
+```bash
+docker compose stop relaycat
+docker run --rm -v relaycat_relaycat-data:/data -v "$PWD:/backup" alpine \
+  tar czf /backup/relaycat-data.tar.gz -C /data .
+docker compose start relaycat
+```
 
-MIT License
+恢复时先停止服务并备份当前 volume，再将压缩包解压到 `/data`。不要在运行中的数据库上直接覆盖文件。
+
+## 反向代理与安全
+
+- 对公网开放时建议使用 Caddy 或 Nginx 提供 HTTPS，并将 `RELAYCAT_COOKIE_SECURE=true`。
+- 只开放反向代理端口；通过防火墙限制后台端口的直接访问。
+- 不要提交 `.env`，也不要把 Bot Token、API Key、密码或数据库连接串写入镜像。
+- AI 提示词和开关存于数据库；AI API Key 仅保存在运行环境。
+- Cloudflare 代理时请确认源站端口受支持，或由 443 反代到 RelayCat。
+
+## 容器发布
+
+`.github/workflows/docker-publish.yml` 在 `main` / `master` 推送时构建 `linux/amd64` 和 `linux/arm64` 镜像：
+
+- `ghcr.io/yayitinyu/relaycat:latest`：日常部署标签。
+- `ghcr.io/yayitinyu/relaycat:sha-xxxxxxx`：不可变回滚标签。
+
+Pull Request 只执行构建验证，不推送镜像。
+
+## License
+
+[MIT](./LICENSE)

@@ -1,5 +1,16 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, BigInteger, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase
 
 class Base(DeclarativeBase):
@@ -49,3 +60,46 @@ class Rule(Base):
     action = Column(String, default="block") # block, drop, allow
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BusinessConnection(Base):
+    __tablename__ = "business_connections"
+
+    id = Column(String, primary_key=True)
+    account_user_id = Column(BigInteger, nullable=False, index=True)
+    user_chat_id = Column(BigInteger, nullable=False)
+    can_reply = Column(Boolean, default=False, nullable=False)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "chat_id",
+            "telegram_message_id",
+            "role",
+            name="uq_business_message_direction",
+        ),
+        Index("ix_conversation_lookup", "connection_id", "chat_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    connection_id = Column(
+        String,
+        ForeignKey("business_connections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chat_id = Column(BigInteger, nullable=False)
+    telegram_message_id = Column(BigInteger, nullable=False)
+    role = Column(String(16), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
