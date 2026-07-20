@@ -7,7 +7,10 @@
     <meta name="theme-color" content="#fff8f6">
     <title>{{ page_title }} · RelayCat</title>
     <link rel="icon" type="image/png" href="/static/favicon.png?v=3">
-    <link rel="stylesheet" href="/static/css/app.css?v=3">
+    <link rel="stylesheet" href="/static/fonts/ChillRoundFRegular/result.css">
+    <link rel="stylesheet" href="/static/fonts/MapleMono-CN-Regular/result.css">
+    <link rel="stylesheet" href="/static/fonts/Lora-VariableFont_wght/result.css">
+    <link rel="stylesheet" href="/static/css/app.css?v=4">
 </head>
 <body class="{% if active_path == '/login' %}login-page{% endif %}">
     <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -20,9 +23,11 @@
         <nav class="main-nav" aria-label="主导航">
             <a href="/" {% if active_path == '/' %}aria-current="page"{% endif %}>概览</a>
             <a href="/rules" {% if active_path.startswith('/rules') %}aria-current="page"{% endif %}>过滤规则</a>
-            <a href="/settings" {% if active_path.startswith('/settings') %}aria-current="page"{% endif %}>自动化设置</a>
+            <a href="/logs" {% if active_path.startswith('/logs') %}aria-current="page"{% endif %}>安全日志</a>
+            <a href="/settings" {% if active_path.startswith('/settings') %}aria-current="page"{% endif %}>安全与 AI</a>
         </nav>
         <form method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button class="text-button" type="submit">退出</button>
         </form>
     </header>

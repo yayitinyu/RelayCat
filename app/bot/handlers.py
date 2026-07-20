@@ -2,6 +2,7 @@ import html
 import logging
 import re
 
+import httpx
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
 from aiogram.types import CallbackQuery, Message, ReactionTypeEmoji
@@ -9,11 +10,31 @@ from aiogram.types import User as TgUser
 from sqlalchemy.future import select
 from sqlalchemy import update
 
-from app.bot.loader import bot, dp
+from app.bot.loader import ai_client, bot, dp
 from app.core.config import settings
 from app.database.core import AsyncSessionLocal
-from app.database.models import User, MessageRoute, Rule, Setting
+from app.database.models import User, MessageRoute, Setting
 from app.bot.verification import generate_verification_challenge
+from app.services.ai import AIConfigurationError, AIResponseError
+from app.services.filtering import (
+    DEFAULT_MODERATION_POLICY,
+    detect_message_type,
+    evaluate_rules,
+    is_bot_command,
+)
+from app.services.protection import (
+    add_audit_log,
+    log_event,
+    record_interception,
+    record_message_and_check_rate_limit,
+    release_expired_ban,
+)
+from app.services.runtime_settings import (
+    get_ai_provider_config,
+    get_bool_setting,
+    get_int_setting,
+    get_setting,
+)
 router = Router()
 dp.include_router(router)
 logger = logging.getLogger(__name__)
@@ -33,6 +54,15 @@ async def get_or_create_user(tg_user: TgUser):
             session.add(user)
             await session.commit()
             await session.refresh(user)
+        elif (
+            user.username != tg_user.username
+            or user.first_name != tg_user.first_name
+            or user.last_name != tg_user.last_name
+        ):
+            user.username = tg_user.username
+            user.first_name = tg_user.first_name
+            user.last_name = tg_user.last_name
+            await session.commit()
         return user
 
 @router.message(CommandStart())
@@ -138,7 +168,18 @@ async def cmd_ban(message: Message):
         return
 
     async with AsyncSessionLocal() as session:
-        await session.execute(update(User).where(User.id == target_id).values(is_banned=True))
+        await session.execute(
+            update(User)
+            .where(User.id == target_id)
+            .values(is_banned=True, banned_until=None, ban_reason="管理员手动封禁")
+        )
+        add_audit_log(
+            session,
+            event_type="manual_ban",
+            outcome="banned",
+            user_id=target_id,
+            reason="Telegram 管理员命令",
+        )
         await session.commit()
     
     await message.answer(f"🔒 User {target_id} has been banned.")
@@ -158,48 +199,21 @@ async def cmd_unban(message: Message):
         return
 
     async with AsyncSessionLocal() as session:
-        await session.execute(update(User).where(User.id == target_id).values(is_banned=False))
+        await session.execute(
+            update(User)
+            .where(User.id == target_id)
+            .values(is_banned=False, banned_until=None, ban_reason=None)
+        )
+        add_audit_log(
+            session,
+            event_type="manual_unban",
+            outcome="unbanned",
+            user_id=target_id,
+            reason="Telegram 管理员命令",
+        )
         await session.commit()
     
     await message.answer(f"✅ User {target_id} has been unbanned.")
-
-async def check_rules(message: Message, user: User) -> str:
-    """Returns 'allow', 'block', or 'drop'"""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Rule).where(Rule.is_active.is_(True)))
-        rules = result.scalars().all()
-    
-    for rule in rules:
-        matched = False
-        try:
-            if rule.rule_type == "message_content":
-                text = message.text or message.caption or ""
-                if re.search(rule.pattern, text):
-                    matched = True
-            elif rule.rule_type == "username":
-                if re.search(rule.pattern, user.username or ""):
-                    matched = True
-            elif rule.rule_type == "is_command":
-                text = message.text or ""
-                if text.startswith("/") and re.search(rule.pattern, text):
-                    matched = True
-            elif rule.rule_type == "is_forwarded":
-                if message.forward_origin and rule.pattern.lower() == "true":
-                    matched = True
-        except re.error:
-            logger.warning("Skipping invalid regex in rule %s", rule.id)
-            continue
-
-        if matched:
-            return rule.action
-
-    if (
-        message.text
-        and message.text.startswith("/")
-        and message.from_user.id != settings.admin_id
-    ):
-        return "drop"
-    return "allow"
 
 # ---------- Message Forwarding (User -> Admin) ----------
 @router.message(F.chat.type == "private")
@@ -220,15 +234,107 @@ async def handle_user_message(message: Message):
         return
         
     if user.is_banned:
-        return # Ignore
+        if await release_expired_ban(user.id):
+            user.is_banned = False
+            user.banned_until = None
+        else:
+            return
 
-    # Rule Check
-    action = await check_rules(message, user)
-    if action == "drop":
+    message_type = detect_message_type(message)
+    rate_result = await record_message_and_check_rate_limit(
+        user_id=user.id,
+        username=user.username,
+        message_type=message_type,
+    )
+    if rate_result.blocked:
+        if rate_result.auto_banned:
+            await message.answer("🚫 发送过于频繁，账号已被自动封禁。")
+        else:
+            await message.answer("⏳ 发送太快了，请稍后再试。")
         return
-    if action == "block":
-        await message.answer("🚫 Message blocked by filter.")
+
+    rule_match = await evaluate_rules(message, user)
+    if rule_match.action in {"block", "drop"}:
+        result = await record_interception(
+            event_type="rule_blocked",
+            user_id=user.id,
+            username=user.username,
+            message_type=message_type,
+            rule_id=rule_match.rule_id,
+            reason=rule_match.rule_name or "命中过滤规则",
+            details={"action": rule_match.action},
+        )
+        if rule_match.action == "block":
+            if result.auto_banned:
+                await message.answer("🚫 消息已拦截；因多次触发规则，账号已被自动封禁。")
+            else:
+                await message.answer("🚫 这条消息未通过安全规则。")
         return
+
+    if rule_match.rule_id is None and is_bot_command(message):
+        await record_interception(
+            event_type="rule_blocked",
+            user_id=user.id,
+            username=user.username,
+            message_type=message_type,
+            reason="未在白名单中放行的 Bot 命令",
+            details={"action": "drop"},
+        )
+        return
+
+    # An explicit allow rule is a deliberate whitelist and skips AI review.
+    if rule_match.rule_id is None and await get_bool_setting("moderation_ai_enabled", False):
+        content = (message.text or message.caption or "").strip()
+        if content:
+            provider = await get_ai_provider_config()
+            policy = await get_setting("moderation_ai_policy", DEFAULT_MODERATION_POLICY)
+            threshold = await get_int_setting(
+                "moderation_ai_threshold", 80, minimum=50, maximum=100
+            )
+            try:
+                decision = await ai_client.review_message(
+                    content,
+                    policy or DEFAULT_MODERATION_POLICY,
+                    provider,
+                )
+                if decision.should_block and decision.confidence * 100 >= threshold:
+                    result = await record_interception(
+                        event_type="ai_blocked",
+                        user_id=user.id,
+                        username=user.username,
+                        message_type=message_type,
+                        reason=decision.reason,
+                        details={
+                            "category": decision.category,
+                            "confidence": round(decision.confidence, 3),
+                        },
+                    )
+                    if result.auto_banned:
+                        await message.answer("🚫 消息未通过 AI 安全审查；账号已被自动封禁。")
+                    else:
+                        await message.answer("🚫 这条消息未通过 AI 安全审查。")
+                    return
+                await log_event(
+                    event_type="ai_review",
+                    outcome="allowed",
+                    user_id=user.id,
+                    username=user.username,
+                    message_type=message_type,
+                    details={
+                        "category": decision.category,
+                        "confidence": round(decision.confidence, 3),
+                    },
+                )
+            except (AIConfigurationError, AIResponseError, httpx.HTTPError):
+                logger.exception("AI moderation failed for user %s", user.id)
+                await log_event(
+                    event_type="ai_review",
+                    outcome="error",
+                    user_id=user.id,
+                    username=user.username,
+                    message_type=message_type,
+                    reason="AI 审查失败，已按安全设置放行",
+                )
 
     if not settings.enable_forwarding:
         await message.answer("Message forwarding is temporarily disabled.")
@@ -267,9 +373,25 @@ async def handle_user_message(message: Message):
                 user_message_id=message.message_id
             ))
             await session.commit()
+
+        await log_event(
+            event_type="relay_forwarded",
+            outcome="delivered",
+            user_id=user.id,
+            username=user.username,
+            message_type=message_type,
+        )
             
     except Exception:
         logger.exception("Failed to forward message %s", message.message_id)
+        await log_event(
+            event_type="relay_forwarded",
+            outcome="error",
+            user_id=user.id,
+            username=user.username,
+            message_type=message_type,
+            reason="转发给管理员失败",
+        )
 
 # ---------- Admin Reply (Admin -> User) ----------
 async def handle_admin_reply(message: Message):

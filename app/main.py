@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.bot.loader import ai_client, bot, dp
 from app.core.config import settings
 from app.database.core import engine, init_db
+from app.services.protection import cleanup_old_audit_logs
 from app.web.routes import router as web_router
 
 # Import modules for router registration.
@@ -42,6 +43,7 @@ async def run_bot() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db()
+    await cleanup_old_audit_logs()
     if settings.admin_password.get_secret_value() == "admin":
         logger.warning("Default admin password is active; change it before deployment")
     if settings.secret_key.get_secret_value() == "change-me-before-production":

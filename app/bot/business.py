@@ -15,7 +15,12 @@ from app.core.config import settings
 from app.database.core import AsyncSessionLocal
 from app.database.models import BusinessConnection, ConversationMessage
 from app.services.ai import AIConfigurationError, AIResponseError
-from app.services.runtime_settings import get_bool_setting, get_setting
+from app.services.protection import log_event
+from app.services.runtime_settings import (
+    get_ai_provider_config,
+    get_bool_setting,
+    get_setting,
+)
 
 logger = logging.getLogger(__name__)
 router = Router(name="business-automation")
@@ -149,6 +154,7 @@ async def handle_business_message(message: Message) -> None:
 
         prompt = await get_setting("business_ai_prompt", settings.ai_system_prompt)
         assert prompt is not None
+        provider = await get_ai_provider_config()
         try:
             await bot.send_chat_action(
                 chat_id=message.chat.id,
@@ -158,6 +164,7 @@ async def handle_business_message(message: Message) -> None:
             reply = await ai_client.generate_reply(
                 await _load_history(connection_id, message.chat.id),
                 prompt,
+                provider,
             )
             sent = await bot.send_message(
                 chat_id=message.chat.id,
@@ -172,9 +179,26 @@ async def handle_business_message(message: Message) -> None:
                 "assistant",
                 reply,
             )
+            await log_event(
+                event_type="business_ai_reply",
+                outcome="delivered",
+                user_id=message.from_user.id,
+                username=message.from_user.username,
+                message_type="text",
+                details={"connection_id": connection_id},
+            )
         except (AIConfigurationError, AIResponseError, httpx.HTTPError):
             logger.exception(
                 "AI reply failed for business connection %s and chat %s",
                 connection_id,
                 message.chat.id,
+            )
+            await log_event(
+                event_type="business_ai_reply",
+                outcome="error",
+                user_id=message.from_user.id,
+                username=message.from_user.username,
+                message_type="text",
+                reason="Business AI 回复失败",
+                details={"connection_id": connection_id},
             )
