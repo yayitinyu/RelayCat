@@ -144,7 +144,14 @@
                             <label>名称<input type="text" name="name" value="{{ rule.name or '' }}" maxlength="120"></label>
                             <label>字段<select name="rule_type">{% for value, label in rule_type_labels.items() %}<option value="{{ value }}" {% if rule.rule_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
                             <label>匹配<select name="match_mode">{% for value, label in match_mode_labels.items() %}<option value="{{ value }}" {% if rule.match_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-                            <label>内容<input class="code-input" type="text" name="pattern" value="{{ rule.pattern }}" maxlength="500" required></label>
+                            {% if rule.match_mode == 'regex' %}
+                            <label>正则表达式<input class="code-input" type="text" name="pattern" value="{{ rule.pattern }}" maxlength="500" required></label>
+                            {% else %}
+                            <label class="keyword-edit-field">内容（每行一项）
+                                <textarea class="keyword-edit-input" name="pattern" rows="5" maxlength="500" required>{{ rule.pattern }}</textarea>
+                                <small class="field-help">换行、逗号或分号都可以分隔多项。</small>
+                            </label>
+                            {% endif %}
                             <label>处理<select name="action">{% for value, label in action_labels.items() %}<option value="{{ value }}" {% if rule.action == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
                             <button class="button button-primary" type="submit">保存修改</button>
                         </form>
