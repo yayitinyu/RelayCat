@@ -1,52 +1,140 @@
-import re
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, Form, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 
 from app.core.config import settings
+from app.core.secret_store import encrypt_secret
 from app.core.security import (
     COOKIE_NAME,
     SESSION_MAX_AGE,
     create_session_token,
+    get_csrf_token,
     is_authenticated,
+    verify_csrf_token,
     verify_password,
 )
 from app.database.core import AsyncSessionLocal
-from app.database.models import BusinessConnection, MessageRoute, Rule, User
-from app.services.runtime_settings import get_bool_setting, get_setting, upsert_settings
+from app.database.models import (
+    AuditLog,
+    BusinessConnection,
+    MessageRoute,
+    Rule,
+    User,
+    utc_now,
+)
+from app.services.filtering import (
+    ACTION_LABELS,
+    DEFAULT_MODERATION_POLICY,
+    MATCH_MODE_LABELS,
+    MESSAGE_TYPE_LABELS,
+    RULE_PRESETS,
+    RULE_TYPE_LABELS,
+    validate_rule_values,
+)
+from app.services.protection import STRIKE_EVENTS, add_audit_log, get_protection_policy
+from app.services.runtime_settings import (
+    get_ai_provider_config,
+    get_bool_setting,
+    get_int_setting,
+    get_settings,
+    upsert_settings,
+)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path("app/templates"))
 
-RULE_TYPES = {"message_content", "username", "is_command", "is_forwarded"}
-RULE_ACTIONS = {"allow", "block", "drop"}
+EVENT_LABELS = {
+    "message_received": "收到消息",
+    "rule_blocked": "规则拦截",
+    "ai_blocked": "AI 拦截",
+    "ai_review": "AI 审查",
+    "rate_limited": "频率拦截",
+    "auto_ban": "自动封禁",
+    "auto_unban": "自动解封",
+    "manual_ban": "手动封禁",
+    "manual_unban": "手动解封",
+    "relay_forwarded": "消息中继",
+    "business_ai_reply": "Business AI",
+    "settings_updated": "设置变更",
+    "rule_created": "新增规则",
+    "rule_updated": "编辑规则",
+    "rule_deleted": "删除规则",
+}
 
 
-def require_admin(request: Request) -> bool:
-    return is_authenticated(request)
+async def require_admin(request: Request) -> bool:
+    if not is_authenticated(request):
+        return False
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        form = await request.form()
+        if not verify_csrf_token(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="表单已过期，请刷新页面后重试")
+    return True
 
 
 def redirect_to_login() -> RedirectResponse:
     return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
 
 
+def redirect_with_query(path: str, **values: object) -> RedirectResponse:
+    query = urlencode({key: str(value) for key, value in values.items() if value is not None})
+    target = f"{path}?{query}" if query else path
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+
+
 def template_context(request: Request, **values):
-    return {"request": request, "active_path": request.url.path, **values}
+    return {
+        "request": request,
+        "active_path": request.url.path,
+        "csrf_token": get_csrf_token(request),
+        **values,
+    }
 
 
-def validate_rule(rule_type: str, pattern: str, action: str) -> str | None:
-    if rule_type not in RULE_TYPES or action not in RULE_ACTIONS:
-        return "规则类型或动作无效"
-    if not pattern.strip() or len(pattern) > 500:
-        return "规则内容必须为 1–500 个字符"
+def validate_rule(
+    rule_type: str,
+    pattern: str,
+    action: str,
+    match_mode: str = "regex",
+) -> str | None:
+    return validate_rule_values(rule_type, pattern, action, match_mode)
+
+
+def normalize_ai_base_url(value: str) -> str:
+    raw = value.strip().rstrip("/")
+    if not raw or len(raw) > 500:
+        raise ValueError("AI Base URL 必须为 1–500 个字符")
+    parsed = urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("AI Base URL 必须是完整的 http(s) 地址")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("AI Base URL 不能包含账号、查询参数或片段")
+    if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise ValueError("远程 AI 接口必须使用 HTTPS；HTTP 仅允许本机地址")
+    path = parsed.path.rstrip("/")
+    if path.endswith("/chat/completions"):
+        path = path.removesuffix("/chat/completions")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
+
+
+def _required_int(
+    form,
+    name: str,
+    label: str,
+    minimum: int,
+    maximum: int,
+) -> int:
     try:
-        re.compile(pattern)
-    except re.error:
-        return "正则表达式格式无效"
-    return None
+        value = int(str(form.get(name) or ""))
+    except ValueError as exc:
+        raise ValueError(f"{label}必须是整数") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{label}必须在 {minimum}–{maximum} 之间")
+    return value
 
 
 @router.get("/healthz", include_in_schema=False)
@@ -88,7 +176,12 @@ async def login(request: Request, password: str = Form(...)):
 
 
 @router.post("/logout")
-async def logout() -> RedirectResponse:
+async def logout(
+    request: Request,
+    authenticated: bool = Depends(require_admin),
+) -> RedirectResponse:
+    if not authenticated:
+        return redirect_to_login()
     response = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(COOKIE_NAME)
     return response
@@ -99,6 +192,7 @@ async def dashboard(request: Request, authenticated: bool = Depends(require_admi
     if not authenticated:
         return redirect_to_login()
 
+    today = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
     async with AsyncSessionLocal() as session:
         user_count = await session.scalar(select(func.count(User.id))) or 0
         msg_count = await session.scalar(select(func.count(MessageRoute.id))) or 0
@@ -106,6 +200,14 @@ async def dashboard(request: Request, authenticated: bool = Depends(require_admi
             await session.scalar(
                 select(func.count(BusinessConnection.id)).where(
                     BusinessConnection.is_enabled.is_(True)
+                )
+            )
+            or 0
+        )
+        blocked_today = (
+            await session.scalar(
+                select(func.count(AuditLog.id)).where(
+                    AuditLog.event_type.in_(STRIKE_EVENTS), AuditLog.created_at >= today
                 )
             )
             or 0
@@ -124,6 +226,7 @@ async def dashboard(request: Request, authenticated: bool = Depends(require_admi
             user_count=user_count,
             msg_count=msg_count,
             business_count=business_count,
+            blocked_today=blocked_today,
             users=users,
         ),
     )
@@ -138,7 +241,18 @@ async def ban_user(
     if not authenticated:
         return redirect_to_login()
     async with AsyncSessionLocal() as session:
-        await session.execute(update(User).where(User.id == user_id).values(is_banned=True))
+        await session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(is_banned=True, banned_until=None, ban_reason="管理员手动封禁")
+        )
+        add_audit_log(
+            session,
+            event_type="manual_ban",
+            outcome="banned",
+            user_id=user_id,
+            reason="管理后台操作",
+        )
         await session.commit()
     return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -152,7 +266,18 @@ async def unban_user(
     if not authenticated:
         return redirect_to_login()
     async with AsyncSessionLocal() as session:
-        await session.execute(update(User).where(User.id == user_id).values(is_banned=False))
+        await session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(is_banned=False, banned_until=None, ban_reason=None)
+        )
+        add_audit_log(
+            session,
+            event_type="manual_unban",
+            outcome="unbanned",
+            user_id=user_id,
+            reason="管理后台操作",
+        )
         await session.commit()
     return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -168,31 +293,95 @@ async def rules_page(
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Rule).order_by(Rule.id.desc()))
         rules = result.scalars().all()
+    existing_presets = {rule.name for rule in rules if rule.name}
     return templates.TemplateResponse(
         request=request,
         name="rules.html",
-        context=template_context(request, page_title="过滤规则", rules=rules, error=error),
+        context=template_context(
+            request,
+            page_title="过滤规则",
+            rules=rules,
+            error=error,
+            rule_presets=RULE_PRESETS,
+            existing_presets=existing_presets,
+            rule_type_labels=RULE_TYPE_LABELS,
+            match_mode_labels=MATCH_MODE_LABELS,
+            action_labels=ACTION_LABELS,
+            message_type_labels=MESSAGE_TYPE_LABELS,
+        ),
     )
 
 
 @router.post("/rules/add")
 async def add_rule(
     request: Request,
+    name: str = Form(""),
     rule_type: str = Form(...),
+    match_mode: str = Form("contains_any"),
     pattern: str = Form(...),
     action: str = Form(...),
     authenticated: bool = Depends(require_admin),
 ):
     if not authenticated:
         return redirect_to_login()
-    if error := validate_rule(rule_type, pattern, action):
-        return RedirectResponse(
-            f"/rules?error={error}", status_code=status.HTTP_303_SEE_OTHER
-        )
+    if error := validate_rule(rule_type, pattern, action, match_mode):
+        return redirect_with_query("/rules", error=error)
+    clean_name = name.strip()[:120] or None
     async with AsyncSessionLocal() as session:
-        session.add(Rule(rule_type=rule_type, pattern=pattern.strip(), action=action))
+        rule = Rule(
+            name=clean_name,
+            rule_type=rule_type,
+            match_mode=match_mode,
+            pattern=pattern.strip(),
+            action=action,
+        )
+        session.add(rule)
+        await session.flush()
+        add_audit_log(
+            session,
+            event_type="rule_created",
+            outcome="saved",
+            rule_id=rule.id,
+            reason=clean_name or RULE_TYPE_LABELS[rule_type],
+        )
         await session.commit()
-    return RedirectResponse("/rules", status_code=status.HTTP_303_SEE_OTHER)
+    return redirect_with_query("/rules", saved=1)
+
+
+@router.post("/rules/presets/add")
+async def add_rule_preset(
+    request: Request,
+    preset_id: str = Form(...),
+    authenticated: bool = Depends(require_admin),
+):
+    if not authenticated:
+        return redirect_to_login()
+    preset = RULE_PRESETS.get(preset_id)
+    if preset is None:
+        return redirect_with_query("/rules", error="推荐防护不存在")
+    async with AsyncSessionLocal() as session:
+        exists = await session.scalar(
+            select(func.count(Rule.id)).where(Rule.name == preset["name"])
+        )
+        if not exists:
+            rule = Rule(
+                name=preset["name"],
+                rule_type=preset["rule_type"],
+                match_mode=preset["match_mode"],
+                pattern=preset["pattern"],
+                action=preset["action"],
+            )
+            session.add(rule)
+            await session.flush()
+            add_audit_log(
+                session,
+                event_type="rule_created",
+                outcome="saved",
+                rule_id=rule.id,
+                reason=f"推荐防护：{preset['name']}",
+            )
+            await session.commit()
+    return redirect_with_query("/rules", saved=1)
 
 
 @router.post("/rules/delete")
@@ -204,8 +393,18 @@ async def delete_rule(
     if not authenticated:
         return redirect_to_login()
     async with AsyncSessionLocal() as session:
-        await session.execute(delete(Rule).where(Rule.id == rule_id))
-        await session.commit()
+        rule = await session.get(Rule, rule_id)
+        if rule:
+            reason = rule.name or RULE_TYPE_LABELS.get(rule.rule_type, rule.rule_type)
+            await session.delete(rule)
+            add_audit_log(
+                session,
+                event_type="rule_deleted",
+                outcome="deleted",
+                rule_id=rule_id,
+                reason=reason,
+            )
+            await session.commit()
     return RedirectResponse("/rules", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -221,6 +420,13 @@ async def toggle_rule(
         rule = await session.get(Rule, rule_id)
         if rule:
             rule.is_active = not rule.is_active
+            add_audit_log(
+                session,
+                event_type="rule_updated",
+                outcome="enabled" if rule.is_active else "disabled",
+                rule_id=rule.id,
+                reason=rule.name or RULE_TYPE_LABELS.get(rule.rule_type, rule.rule_type),
+            )
             await session.commit()
     return RedirectResponse("/rules", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -229,48 +435,94 @@ async def toggle_rule(
 async def update_rule(
     request: Request,
     rule_id: int = Form(...),
+    name: str = Form(""),
     rule_type: str = Form(...),
+    match_mode: str = Form("regex"),
     pattern: str = Form(...),
     action: str = Form(...),
     authenticated: bool = Depends(require_admin),
 ):
     if not authenticated:
         return redirect_to_login()
-    if error := validate_rule(rule_type, pattern, action):
-        return RedirectResponse(
-            f"/rules?error={error}", status_code=status.HTTP_303_SEE_OTHER
-        )
+    if error := validate_rule(rule_type, pattern, action, match_mode):
+        return redirect_with_query("/rules", error=error)
     async with AsyncSessionLocal() as session:
         rule = await session.get(Rule, rule_id)
         if rule:
+            rule.name = name.strip()[:120] or None
             rule.rule_type = rule_type
+            rule.match_mode = match_mode
             rule.pattern = pattern.strip()
             rule.action = action
+            add_audit_log(
+                session,
+                event_type="rule_updated",
+                outcome="saved",
+                rule_id=rule.id,
+                reason=rule.name or RULE_TYPE_LABELS[rule_type],
+            )
             await session.commit()
-    return RedirectResponse("/rules", status_code=status.HTTP_303_SEE_OTHER)
+    return redirect_with_query("/rules", saved=1)
 
 
 @router.get("/settings")
 async def settings_page(request: Request, authenticated: bool = Depends(require_admin)):
     if not authenticated:
         return redirect_to_login()
-    confirm_reply = await get_bool_setting("confirm_reply")
-    business_ai_enabled = await get_bool_setting("business_ai_enabled", settings.ai_enabled)
-    business_ai_prompt = await get_setting(
-        "business_ai_prompt", settings.ai_system_prompt
+    values = await get_settings(
+        {
+            "confirm_reply",
+            "business_ai_enabled",
+            "business_ai_prompt",
+            "moderation_ai_enabled",
+            "moderation_ai_policy",
+            "moderation_ai_threshold",
+            "rate_limit_enabled",
+            "messages_per_minute",
+            "auto_ban_enabled",
+            "auto_ban_threshold",
+            "auto_ban_window_minutes",
+            "auto_ban_duration_hours",
+            "log_retention_days",
+            "ai_api_key_encrypted",
+        }
     )
+    provider = await get_ai_provider_config()
+    protection = await get_protection_policy()
     return templates.TemplateResponse(
         request=request,
         name="settings.html",
         context=template_context(
             request,
             page_title="系统设置",
-            confirm_reply=confirm_reply,
-            business_ai_enabled=business_ai_enabled,
-            business_ai_prompt=business_ai_prompt,
-            ai_configured=settings.ai_api_key is not None,
-            ai_model=settings.ai_model,
-            ai_base_url=settings.ai_base_url,
+            confirm_reply=await get_bool_setting("confirm_reply"),
+            business_ai_enabled=await get_bool_setting(
+                "business_ai_enabled", settings.ai_enabled
+            ),
+            business_ai_prompt=values["business_ai_prompt"] or settings.ai_system_prompt,
+            moderation_ai_enabled=await get_bool_setting("moderation_ai_enabled", False),
+            moderation_ai_policy=values["moderation_ai_policy"]
+            or DEFAULT_MODERATION_POLICY,
+            moderation_ai_threshold=await get_int_setting(
+                "moderation_ai_threshold", 80, minimum=50, maximum=100
+            ),
+            rate_limit_enabled=protection.rate_limit_enabled,
+            messages_per_minute=protection.messages_per_minute,
+            auto_ban_enabled=protection.auto_ban_enabled,
+            auto_ban_threshold=protection.auto_ban_threshold,
+            auto_ban_window_minutes=protection.auto_ban_window_minutes,
+            auto_ban_duration_hours=protection.auto_ban_duration_hours,
+            log_retention_days=await get_int_setting(
+                "log_retention_days", 30, minimum=1, maximum=365
+            ),
+            ai_configured=provider.is_configured,
+            ai_key_source=provider.source,
+            ai_has_managed_key=bool(values["ai_api_key_encrypted"]),
+            ai_model=provider.model,
+            ai_base_url=provider.base_url,
+            secret_key_ready=(
+                settings.secret_key.get_secret_value() != "change-me-before-production"
+            ),
         ),
     )
 
@@ -283,19 +535,122 @@ async def update_settings(
     if not authenticated:
         return redirect_to_login()
     form = await request.form()
-    prompt = str(form.get("business_ai_prompt") or "").strip()
-    if not prompt or len(prompt) > 4000:
-        return RedirectResponse(
-            "/settings?error=提示词必须为 1–4000 个字符",
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
-    await upsert_settings(
-        {
+    try:
+        prompt = str(form.get("business_ai_prompt") or "").strip()
+        moderation_policy = str(form.get("moderation_ai_policy") or "").strip()
+        model = str(form.get("ai_model") or "").strip()
+        base_url = normalize_ai_base_url(str(form.get("ai_base_url") or ""))
+        if not prompt or len(prompt) > 4000:
+            raise ValueError("Business AI 提示词必须为 1–4000 个字符")
+        if not moderation_policy or len(moderation_policy) > 2000:
+            raise ValueError("AI 审查标准必须为 1–2000 个字符")
+        if not model or len(model) > 120 or any(ord(char) < 32 for char in model):
+            raise ValueError("AI 模型名必须为 1–120 个可见字符")
+
+        values = {
             "confirm_reply": "true" if form.get("confirm_reply") else "false",
             "business_ai_enabled": (
                 "true" if form.get("business_ai_enabled") else "false"
             ),
             "business_ai_prompt": prompt,
+            "moderation_ai_enabled": (
+                "true" if form.get("moderation_ai_enabled") else "false"
+            ),
+            "moderation_ai_policy": moderation_policy,
+            "moderation_ai_threshold": str(
+                _required_int(form, "moderation_ai_threshold", "AI 拦截置信度", 50, 100)
+            ),
+            "rate_limit_enabled": (
+                "true" if form.get("rate_limit_enabled") else "false"
+            ),
+            "messages_per_minute": str(
+                _required_int(form, "messages_per_minute", "每分钟消息数", 1, 300)
+            ),
+            "auto_ban_enabled": (
+                "true" if form.get("auto_ban_enabled") else "false"
+            ),
+            "auto_ban_threshold": str(
+                _required_int(form, "auto_ban_threshold", "自动封禁触发次数", 2, 100)
+            ),
+            "auto_ban_window_minutes": str(
+                _required_int(form, "auto_ban_window_minutes", "统计时段", 1, 1440)
+            ),
+            "auto_ban_duration_hours": str(
+                _required_int(form, "auto_ban_duration_hours", "封禁时长", 0, 8760)
+            ),
+            "log_retention_days": str(
+                _required_int(form, "log_retention_days", "日志保留天数", 1, 365)
+            ),
+            "ai_base_url": base_url,
+            "ai_model": model,
         }
+
+        api_key = str(form.get("ai_api_key") or "").strip()
+        if api_key:
+            if len(api_key) > 512:
+                raise ValueError("AI API Key 不能超过 512 个字符")
+            if settings.secret_key.get_secret_value() == "change-me-before-production":
+                raise ValueError(
+                    "保存 API Key 前，请先把 RELAYCAT_SECRET_KEY 改为随机长字符串并重启"
+                )
+            values["ai_api_key_encrypted"] = encrypt_secret(api_key)
+        elif form.get("clear_ai_api_key"):
+            values["ai_api_key_encrypted"] = ""
+    except ValueError as exc:
+        return redirect_with_query("/settings", error=str(exc))
+
+    await upsert_settings(values)
+    async with AsyncSessionLocal() as session:
+        add_audit_log(
+            session,
+            event_type="settings_updated",
+            outcome="saved",
+            reason="安全、限流与 AI 设置已更新",
+            details={
+                "business_ai_enabled": bool(form.get("business_ai_enabled")),
+                "moderation_ai_enabled": bool(form.get("moderation_ai_enabled")),
+                "rate_limit_enabled": bool(form.get("rate_limit_enabled")),
+                "auto_ban_enabled": bool(form.get("auto_ban_enabled")),
+                "api_key_changed": bool(api_key or form.get("clear_ai_api_key")),
+            },
+        )
+        await session.commit()
+    return redirect_with_query("/settings", saved=1)
+
+
+@router.get("/logs")
+async def logs_page(
+    request: Request,
+    event: str | None = None,
+    page: int = 1,
+    authenticated: bool = Depends(require_admin),
+):
+    if not authenticated:
+        return redirect_to_login()
+    page = max(1, page)
+    event_filter = event if event in EVENT_LABELS else None
+    conditions = [AuditLog.event_type == event_filter] if event_filter else []
+    async with AsyncSessionLocal() as session:
+        total = await session.scalar(select(func.count(AuditLog.id)).where(*conditions)) or 0
+        result = await session.execute(
+            select(AuditLog)
+            .where(*conditions)
+            .order_by(AuditLog.id.desc())
+            .offset((page - 1) * 50)
+            .limit(50)
+        )
+        entries = result.scalars().all()
+    return templates.TemplateResponse(
+        request=request,
+        name="logs.html",
+        context=template_context(
+            request,
+            page_title="安全日志",
+            entries=entries,
+            total=total,
+            page=page,
+            has_next=page * 50 < total,
+            selected_event=event_filter,
+            event_labels=EVENT_LABELS,
+        ),
     )
-    return RedirectResponse("/settings?saved=1", status_code=status.HTTP_303_SEE_OTHER)

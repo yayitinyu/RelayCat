@@ -12,8 +12,11 @@
 - 原生人机验证：首次会话通过 Emoji 按钮完成验证，无需 reCAPTCHA。
 - Telegram Business 自动化：Bot 可作为 Connected Business Bot 代表账号回复私聊。
 - AI 自动回复：兼容 OpenAI Chat Completions 格式，可自定义 Base URL、模型与系统提示词。
-- 消息过滤：按消息内容、用户名、命令或转发状态执行正则规则。
-- Web 管理后台：查看统计、封禁用户、管理规则和 AI 提示词。
+- 分层消息防护：关键词、发送者名称、链接、命令、转发状态、消息类型与限时正则规则。
+- AI 辅助审查：使用 OpenAI-compatible 接口对未命中白名单的文字做第二层安全判断。
+- 自动限流与封禁：限制每人每分钟发送量，并在短时间多次拦截后临时或永久封禁。
+- 安全日志：记录中继、拦截、AI、限流、封禁和后台设置事件，不保存消息正文或密钥。
+- Web 管理后台：查看统计、封禁用户、使用推荐防护管理规则，并配置安全与 AI。
 - 轻量持久化：默认使用 SQLite，也可切换 PostgreSQL。
 - Docker / GHCR：自动发布 `ghcr.io/yayitinyu/relaycat:latest`，同时保留 `sha-*` 回滚标签。
 
@@ -76,7 +79,7 @@ RelayCat 使用 Telegram 官方的 Connected Business Bots，不会要求登录�
 1. 在 `@BotFather` 中为 Bot 打开 **Business Mode**。
 2. 在支持 Telegram Business 的账号中打开 **设置 → Telegram Business → Chatbots**。
 3. 连接 RelayCat Bot，选择允许处理的聊天，并授予回复消息权限。
-4. 在 `.env` 中配置 AI API：
+4. 在管理后台的「安全与 AI」中配置 Base URL、模型和 API Key。也可以继续使用 `.env` 作为初始值或回退配置：
 
    ```dotenv
    RELAYCAT_AI_ENABLED=true
@@ -85,7 +88,7 @@ RelayCat 使用 Telegram 官方的 Connected Business Bots，不会要求登录�
    RELAYCAT_AI_MODEL=gpt-4o-mini
    ```
 
-5. 重启服务，在后台的「自动化设置」中确认 AI 状态，并编辑系统提示词。
+5. 打开 Business AI 助理开关并编辑职责与语气。后台设置立即生效，无需为普通设置重启服务。
 
 ```bash
 docker compose restart relaycat
@@ -116,10 +119,10 @@ docker compose restart relaycat
 | `RELAYCAT_DB_URL` | SQLite | SQLAlchemy 异步数据库 URL |
 | `RELAYCAT_ENABLE_FORWARDING` | `true` | 是否启用普通 Bot 消息中继 |
 | `RELAYCAT_DROP_PENDING_UPDATES` | `false` | 启动时是否丢弃 Telegram 未处理更新 |
-| `RELAYCAT_AI_ENABLED` | `false` | Business AI 默认开关，可在后台覆盖 |
-| `RELAYCAT_AI_BASE_URL` | OpenAI API | OpenAI-compatible API Base URL |
-| `RELAYCAT_AI_API_KEY` | 无 | AI API 密钥，只从环境变量读取 |
-| `RELAYCAT_AI_MODEL` | `gpt-4o-mini` | Chat Completions 模型名 |
+| `RELAYCAT_AI_ENABLED` | `false` | Business AI 初始开关，可在后台覆盖 |
+| `RELAYCAT_AI_BASE_URL` | OpenAI API | OpenAI-compatible API Base URL 初始值 |
+| `RELAYCAT_AI_API_KEY` | 无 | AI API 密钥回退值，也可在后台加密保存 |
+| `RELAYCAT_AI_MODEL` | `gpt-4o-mini` | Chat Completions 模型初始值 |
 | `RELAYCAT_AI_SYSTEM_PROMPT` | 内置安全提示词 | AI 默认系统提示词，可在后台覆盖 |
 | `RELAYCAT_AI_TIMEOUT_SECONDS` | `30` | AI 请求超时秒数 |
 | `RELAYCAT_AI_HISTORY_LIMIT` | `12` | 每次生成携带的最近消息数，范围 2–50 |
@@ -182,12 +185,17 @@ docker compose start relaycat
 
 恢复时先停止服务并备份当前 volume，再将压缩包解压到 `/data`。不要在运行中的数据库上直接覆盖文件。
 
+规则、安全设置、加密后的后台 AI Key 与日志都存放在同一数据库中。升级旧版本时，RelayCat 会自动补齐新增字段与日志表；安全日志默认保留 30 天，可在后台调整为 1–365 天。
+
 ## 反向代理与安全
 
 - 对公网开放时建议使用 Caddy 或 Nginx 提供 HTTPS，并将 `RELAYCAT_COOKIE_SECURE=true`。
 - 只开放反向代理端口；通过防火墙限制后台端口的直接访问。
 - 不要提交 `.env`，也不要把 Bot Token、API Key、密码或数据库连接串写入镜像。
-- AI 提示词和开关存于数据库；AI API Key 仅保存在运行环境。
+- 后台 AI API Key 使用 `RELAYCAT_SECRET_KEY` 派生的 Fernet 密钥加密后存入数据库，页面永不回显；使用默认 Session Secret 时禁止后台保存 Key。
+- 远程 AI Base URL 必须使用 HTTPS，本机 `localhost` / `127.0.0.1` / `::1` 才允许 HTTP。
+- AI 审查只发送最多 4000 字符的消息文本，不发送 Telegram Token、管理员密码或历史日志；接口失败时记录错误并按设置放行。
+- 管理后台所有已登录写操作都校验 CSRF Token，Session Cookie 使用 `HttpOnly` 和 `SameSite=Strict`；通过 HTTPS 时还应设置 `RELAYCAT_COOKIE_SECURE=true`。
 - Cloudflare 代理时请确认源站端口受支持，或由 443 反代到 RelayCat。
 
 ## 容器发布

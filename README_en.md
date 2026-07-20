@@ -1,6 +1,6 @@
 # RelayCat
 
-A lightweight Telegram bidirectional relay and Business AI chat assistant. It forwards Bot conversations to an administrator and can act as an official Connected Business Bot to answer private messages through an OpenAI-compatible API.
+A lightweight Telegram bidirectional relay and Business AI chat assistant. It forwards Bot conversations to an administrator, filters abusive or spam traffic, and can act as an official Connected Business Bot through an OpenAI-compatible API.
 
 [中文文档](./README.md)
 
@@ -30,7 +30,14 @@ RELAYCAT_AI_MODEL=gpt-4o-mini
 
 4. Restart RelayCat and edit the system prompt in **Automation settings**.
 
-RelayCat uses Telegram's official business connection API. It never logs in as a user or stores a phone number, login code, or user session. AI keys are read only from environment variables and are never displayed in the dashboard.
+RelayCat uses Telegram's official business connection API. It never logs in as a user or stores a phone number, login code, or user session. The dashboard can configure the AI Base URL, model, and API key. Dashboard keys are encrypted at rest with `RELAYCAT_SECRET_KEY`, are never displayed again, and remote HTTP endpoints are rejected in favor of HTTPS.
+
+## Message protection
+
+- Beginner-friendly keyword, sender, link, forwarding, command, and message-type rules, with custom regular expressions kept in the advanced section.
+- Optional AI-assisted moderation for messages that did not match an explicit allow rule.
+- Per-user messages-per-minute limits and automatic temporary or permanent bans after repeated interceptions.
+- A dashboard audit trail for relay, filtering, AI, rate-limit, ban, and settings events. Message bodies and API keys are not stored in the log; retention defaults to 30 days.
 
 Official documentation: [Connected Business Bots](https://core.telegram.org/api/bots/connected-business-bots) and [Bot API](https://core.telegram.org/bots/api#businessconnection).
 

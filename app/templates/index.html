@@ -26,6 +26,11 @@
         <strong>{{ business_count }}</strong>
         <small>当前启用的账号自动化</small>
     </article>
+    <article class="stat-card stat-alert">
+        <span>今日已拦截</span>
+        <strong>{{ blocked_today }}</strong>
+        <small>规则、AI 与频率拦截</small>
+    </article>
 </section>
 
 <section class="panel data-panel" aria-labelledby="recent-users-title">
@@ -46,15 +51,15 @@
                     <td><strong>{{ user.first_name or '未命名用户' }}</strong><small>@{{ user.username or '无用户名' }}</small></td>
                     <td><code>{{ user.id }}</code></td>
                     <td>
-                        {% if user.is_banned %}<span class="status status-danger">已封禁</span>
+                        {% if user.is_banned %}<span class="status status-danger">{% if user.banned_until %}封禁至 {{ user.banned_until.strftime('%m-%d %H:%M') }}{% else %}永久封禁{% endif %}</span>
                         {% elif user.is_verified %}<span class="status status-ok">已验证</span>
                         {% else %}<span class="status">待验证</span>{% endif %}
                     </td>
                     <td class="align-right">
                         {% if user.is_banned %}
-                        <form method="post" action="/users/unban"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action" type="submit">解除封禁</button></form>
+                        <form method="post" action="/users/unban"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action" type="submit">解除封禁</button></form>
                         {% else %}
-                        <form method="post" action="/users/ban"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action danger" type="submit">封禁</button></form>
+                        <form method="post" action="/users/ban"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action danger" type="submit">封禁</button></form>
                         {% endif %}
                     </td>
                 </tr>
