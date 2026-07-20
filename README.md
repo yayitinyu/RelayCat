@@ -79,7 +79,7 @@ RelayCat 使用 Telegram 官方的 Connected Business Bots，不会要求登录�
 1. 在 `@BotFather` 中为 Bot 打开 **Business Mode**。
 2. 在支持 Telegram Business 的账号中打开 **设置 → Telegram Business → Chatbots**。
 3. 连接 RelayCat Bot，选择允许处理的聊天，并授予回复消息权限。
-4. 在管理后台的「安全与 AI」中配置 Base URL、模型和 API Key。也可以继续使用 `.env` 作为初始值或回退配置：
+4. 在管理后台的「安全与 AI」中配置 Base URL 和 API Key，然后点击「获取并保存渠道模型」读取兼容的 `/models` 列表。RelayCat 会保存多个模型供下拉切换；也可以继续使用 `.env` 作为初始值或回退配置：
 
    ```dotenv
    RELAYCAT_AI_ENABLED=true
@@ -88,7 +88,7 @@ RelayCat 使用 Telegram 官方的 Connected Business Bots，不会要求登录�
    RELAYCAT_AI_MODEL=gpt-4o-mini
    ```
 
-5. 打开 Business AI 助理开关并编辑职责与语气。后台设置立即生效，无需为普通设置重启服务。
+5. 选择当前模型，打开 Business AI 助理开关并编辑职责与语气。后台设置立即生效，无需为普通设置重启服务；已配置的 API Key 只显示星号占位，真实值不会返回浏览器。
 
 ```bash
 docker compose restart relaycat

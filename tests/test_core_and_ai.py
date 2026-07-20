@@ -36,6 +36,11 @@ from app.services.protection import (  # noqa: E402
     record_interception,
     record_message_and_check_rate_limit,
 )
+from app.services.runtime_settings import (  # noqa: E402
+    AIProviderConfig,
+    clean_ai_model_id,
+    normalize_ai_models,
+)
 from app.web.routes import normalize_ai_base_url, validate_rule  # noqa: E402
 
 
@@ -116,8 +121,48 @@ class WebValidationTests(unittest.TestCase):
             "http://127.0.0.1:11434/v1",
         )
 
+    def test_normalizes_saved_model_catalog(self) -> None:
+        self.assertEqual(
+            normalize_ai_models(["gpt-4.1", " gpt-4.1 ", "claude-sonnet"]),
+            ["gpt-4.1", "claude-sonnet"],
+        )
+        with self.assertRaisesRegex(ValueError, "可见字符"):
+            clean_ai_model_id("bad\nmodel")
+
 
 class AIReplyClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fetches_openai_compatible_model_catalog(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.method, "GET")
+            self.assertEqual(request.url.path, "/v1/models")
+            self.assertEqual(request.headers["authorization"], "Bearer channel-key")
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "gpt-4.1-mini", "object": "model"},
+                        {"id": "gpt-4.1", "object": "model"},
+                        {"id": "gpt-4.1-mini", "object": "model"},
+                    ]
+                },
+            )
+
+        client = AIReplyClient(make_settings())
+        await client._client.aclose()
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            models = await client.list_models(
+                AIProviderConfig(
+                    base_url="https://channel.example/v1",
+                    api_key="channel-key",
+                    model="gpt-4.1",
+                    source="admin",
+                )
+            )
+        finally:
+            await client.close()
+        self.assertEqual(models, ["gpt-4.1", "gpt-4.1-mini"])
+
     async def test_returns_chat_completion_content(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.url.path, "/v1/chat/completions")

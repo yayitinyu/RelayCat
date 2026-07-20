@@ -1,6 +1,8 @@
 from pathlib import Path
+import json
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
+import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -35,12 +37,17 @@ from app.services.filtering import (
     RULE_TYPE_LABELS,
     validate_rule_values,
 )
+from app.services.ai import AIConfigurationError, AIReplyClient, AIResponseError
 from app.services.protection import STRIKE_EVENTS, add_audit_log, get_protection_policy
 from app.services.runtime_settings import (
+    AIProviderConfig,
+    clean_ai_model_id,
     get_ai_provider_config,
     get_bool_setting,
     get_int_setting,
+    get_saved_ai_models,
     get_settings,
+    normalize_ai_models,
     upsert_settings,
 )
 
@@ -60,6 +67,7 @@ EVENT_LABELS = {
     "relay_forwarded": "消息中继",
     "business_ai_reply": "Business AI",
     "settings_updated": "设置变更",
+    "model_catalog_updated": "模型目录更新",
     "rule_created": "新增规则",
     "rule_updated": "编辑规则",
     "rule_deleted": "删除规则",
@@ -488,6 +496,7 @@ async def settings_page(request: Request, authenticated: bool = Depends(require_
         }
     )
     provider = await get_ai_provider_config()
+    saved_ai_models = await get_saved_ai_models(provider.model)
     protection = await get_protection_policy()
     return templates.TemplateResponse(
         request=request,
@@ -518,7 +527,9 @@ async def settings_page(request: Request, authenticated: bool = Depends(require_
             ai_configured=provider.is_configured,
             ai_key_source=provider.source,
             ai_has_managed_key=bool(values["ai_api_key_encrypted"]),
+            ai_has_key=bool(provider.api_key),
             ai_model=provider.model,
+            saved_ai_models=saved_ai_models,
             ai_base_url=provider.base_url,
             secret_key_ready=(
                 settings.secret_key.get_secret_value() != "change-me-before-production"
@@ -538,14 +549,15 @@ async def update_settings(
     try:
         prompt = str(form.get("business_ai_prompt") or "").strip()
         moderation_policy = str(form.get("moderation_ai_policy") or "").strip()
-        model = str(form.get("ai_model") or "").strip()
+        custom_model = str(form.get("ai_model_custom") or "").strip()
+        model = clean_ai_model_id(custom_model or form.get("ai_model") or "")
         base_url = normalize_ai_base_url(str(form.get("ai_base_url") or ""))
         if not prompt or len(prompt) > 4000:
             raise ValueError("Business AI 提示词必须为 1–4000 个字符")
         if not moderation_policy or len(moderation_policy) > 2000:
             raise ValueError("AI 审查标准必须为 1–2000 个字符")
-        if not model or len(model) > 120 or any(ord(char) < 32 for char in model):
-            raise ValueError("AI 模型名必须为 1–120 个可见字符")
+        saved_models = await get_saved_ai_models()
+        saved_models = normalize_ai_models([model, *saved_models])
 
         values = {
             "confirm_reply": "true" if form.get("confirm_reply") else "false",
@@ -583,6 +595,7 @@ async def update_settings(
             ),
             "ai_base_url": base_url,
             "ai_model": model,
+            "ai_models": json.dumps(saved_models, ensure_ascii=False),
         }
 
         api_key = str(form.get("ai_api_key") or "").strip()
@@ -616,6 +629,89 @@ async def update_settings(
         )
         await session.commit()
     return redirect_with_query("/settings", saved=1)
+
+
+def _model_fetch_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code in {401, 403}:
+            return "API Key 无效，或该密钥没有读取模型列表的权限"
+        if status_code == 404:
+            return "这个渠道没有提供兼容的 /models 接口"
+        return f"渠道返回 HTTP {status_code}，暂时无法获取模型"
+    if isinstance(exc, httpx.RequestError):
+        return "无法连接 AI 渠道，请检查 Base URL 和网络"
+    if isinstance(exc, AIConfigurationError):
+        return "请先填写 API Key 和 Base URL"
+    if isinstance(exc, AIResponseError):
+        return "渠道返回的模型列表格式不兼容或内容为空"
+    return "获取模型失败，请检查渠道配置"
+
+
+@router.post("/settings/ai/models/fetch")
+async def fetch_ai_models(
+    request: Request,
+    authenticated: bool = Depends(require_admin),
+):
+    if not authenticated:
+        return redirect_to_login()
+    form = await request.form()
+    try:
+        base_url = normalize_ai_base_url(str(form.get("ai_base_url") or ""))
+        current_provider = await get_ai_provider_config()
+        submitted_key = str(form.get("ai_api_key") or "").strip()
+        if submitted_key and len(submitted_key) > 512:
+            raise ValueError("AI API Key 不能超过 512 个字符")
+        if submitted_key and (
+            settings.secret_key.get_secret_value() == "change-me-before-production"
+        ):
+            raise ValueError(
+                "保存 API Key 前，请先把 RELAYCAT_SECRET_KEY 改为随机长字符串并重启"
+            )
+        api_key = submitted_key or current_provider.api_key
+        if not api_key:
+            raise AIConfigurationError("AI API key and Base URL are required")
+
+        selected = str(form.get("ai_model_custom") or "").strip()
+        selected = selected or str(form.get("ai_model") or "").strip()
+        if selected:
+            selected = clean_ai_model_id(selected)
+        client = AIReplyClient(settings)
+        try:
+            models = await client.list_models(
+                AIProviderConfig(
+                    base_url=base_url,
+                    api_key=api_key,
+                    model=selected or current_provider.model,
+                    source="admin" if submitted_key else current_provider.source,
+                )
+            )
+        finally:
+            await client.close()
+    except ValueError as exc:
+        return redirect_with_query("/settings", error=str(exc))
+    except (AIConfigurationError, AIResponseError, httpx.HTTPError) as exc:
+        return redirect_with_query("/settings", error=_model_fetch_error(exc))
+
+    active_model = selected if selected in models else models[0]
+    values = {
+        "ai_base_url": base_url,
+        "ai_model": active_model,
+        "ai_models": json.dumps(models, ensure_ascii=False),
+    }
+    if submitted_key:
+        values["ai_api_key_encrypted"] = encrypt_secret(submitted_key)
+    await upsert_settings(values)
+    async with AsyncSessionLocal() as session:
+        add_audit_log(
+            session,
+            event_type="model_catalog_updated",
+            outcome="saved",
+            reason=f"已获取并保存 {len(models)} 个渠道模型",
+            details={"model_count": len(models), "api_key_changed": bool(submitted_key)},
+        )
+        await session.commit()
+    return redirect_with_query("/settings", models_fetched=len(models))
 
 
 @router.get("/logs")

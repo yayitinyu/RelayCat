@@ -28,9 +28,9 @@ RELAYCAT_AI_API_KEY=your-api-key
 RELAYCAT_AI_MODEL=gpt-4o-mini
 ```
 
-4. Restart RelayCat and edit the system prompt in **Automation settings**.
+4. Restart RelayCat and edit the system prompt in **Automation settings**. The dashboard can fetch a compatible provider's `/models` catalog, save multiple models, and switch the active model from a select control.
 
-RelayCat uses Telegram's official business connection API. It never logs in as a user or stores a phone number, login code, or user session. The dashboard can configure the AI Base URL, model, and API key. Dashboard keys are encrypted at rest with `RELAYCAT_SECRET_KEY`, are never displayed again, and remote HTTP endpoints are rejected in favor of HTTPS.
+RelayCat uses Telegram's official business connection API. It never logs in as a user or stores a phone number, login code, or user session. The dashboard can configure the AI Base URL, model catalog, active model, and API key. Dashboard keys are encrypted at rest with `RELAYCAT_SECRET_KEY`; a masked placeholder indicates that a key exists without returning it to the browser, and remote HTTP endpoints are rejected in favor of HTTPS.
 
 ## Message protection
 
