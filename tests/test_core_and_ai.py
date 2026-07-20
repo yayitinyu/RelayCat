@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import httpx
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -101,6 +102,41 @@ class RuleValidationTests(unittest.TestCase):
     def test_detects_bot_command_with_username_suffix(self) -> None:
         message = SimpleNamespace(text="/help@RelayCatBot details")
         self.assertTrue(is_bot_command(message))
+
+
+class RuleEditorTemplateTests(unittest.TestCase):
+    def test_plain_keywords_keep_line_separators_in_editor(self) -> None:
+        environment = Environment(
+            loader=FileSystemLoader("app/templates"),
+            autoescape=select_autoescape(),
+        )
+        rule = SimpleNamespace(
+            id=1,
+            is_active=True,
+            name="常见导流联系方式",
+            rule_type="message_content",
+            match_mode="contains_any",
+            pattern="加微信\n私聊返利",
+            action="block",
+        )
+
+        rendered = environment.get_template("rules.html").render(
+            request=SimpleNamespace(query_params={}),
+            active_path="/rules",
+            page_title="过滤规则",
+            csrf_token="test-token",
+            error=None,
+            rules=[rule],
+            rule_presets={},
+            existing_presets=set(),
+            rule_type_labels={"message_content": "消息正文"},
+            match_mode_labels={"contains_any": "包含任一关键词"},
+            action_labels={"block": "拦截并告知"},
+            message_type_labels={},
+        )
+
+        self.assertIn(">加微信\n私聊返利</textarea>", rendered)
+        self.assertNotIn('value="加微信\n私聊返利"', rendered)
 
 
 class SecretStoreTests(unittest.TestCase):
