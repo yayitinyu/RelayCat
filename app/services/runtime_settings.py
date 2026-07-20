@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
+import json
 import logging
 
 from sqlalchemy import select
@@ -10,6 +11,9 @@ from app.core.config import settings
 from app.core.secret_store import SecretDecryptionError, decrypt_secret
 
 logger = logging.getLogger(__name__)
+
+AI_MODEL_ID_MAX_LENGTH = 200
+AI_MODEL_CATALOG_LIMIT = 500
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,51 @@ async def get_settings(keys: set[str]) -> dict[str, str | None]:
         result = await session.execute(select(Setting).where(Setting.key.in_(keys)))
         found = {item.key: item.value for item in result.scalars()}
     return {key: found.get(key) for key in keys}
+
+
+def clean_ai_model_id(value: object) -> str:
+    model_id = str(value).strip()
+    if (
+        not model_id
+        or len(model_id) > AI_MODEL_ID_MAX_LENGTH
+        or any(ord(char) < 32 for char in model_id)
+    ):
+        raise ValueError(
+            f"AI 模型名必须为 1–{AI_MODEL_ID_MAX_LENGTH} 个可见字符"
+        )
+    return model_id
+
+
+def normalize_ai_models(values: list[object]) -> list[str]:
+    models: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        try:
+            model_id = clean_ai_model_id(value)
+        except ValueError:
+            continue
+        if model_id not in seen:
+            seen.add(model_id)
+            models.append(model_id)
+        if len(models) >= AI_MODEL_CATALOG_LIMIT:
+            break
+    return models
+
+
+async def get_saved_ai_models(active_model: str | None = None) -> list[str]:
+    raw = await get_setting("ai_models")
+    stored: list[object] = []
+    if raw:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Saved AI model catalog is not valid JSON; ignoring it")
+        else:
+            if isinstance(payload, list):
+                stored = payload
+    if active_model:
+        stored.insert(0, active_model)
+    return normalize_ai_models(stored)
 
 
 async def get_ai_provider_config() -> AIProviderConfig:

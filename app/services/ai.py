@@ -6,7 +6,9 @@ import re
 import httpx
 
 from app.core.config import Settings
-from app.services.runtime_settings import AIProviderConfig
+from app.services.runtime_settings import AIProviderConfig, normalize_ai_models
+
+MODEL_CATALOG_MAX_BYTES = 1024 * 1024
 
 
 class AIConfigurationError(RuntimeError):
@@ -127,6 +129,38 @@ class AIReplyClient:
             max_tokens=180,
         )
         return parse_review_decision(raw)
+
+    async def list_models(self, provider: AIProviderConfig) -> list[str]:
+        if not provider.api_key or not provider.base_url.strip():
+            raise AIConfigurationError("AI API key and Base URL are required")
+
+        endpoint = f"{provider.base_url.rstrip('/')}/models"
+        async with self._client.stream(
+            "GET",
+            endpoint,
+            headers={"Authorization": f"Bearer {provider.api_key}"},
+        ) as response:
+            response.raise_for_status()
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > MODEL_CATALOG_MAX_BYTES:
+                    raise AIResponseError("AI provider model list is too large")
+
+        try:
+            payload = json.loads(body)
+            items = payload["data"]
+        except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError) as exc:
+            raise AIResponseError("AI provider returned an invalid model list") from exc
+        if not isinstance(items, list):
+            raise AIResponseError("AI provider returned an invalid model list")
+
+        models = normalize_ai_models(
+            [item.get("id") for item in items if isinstance(item, dict) and item.get("id")]
+        )
+        if not models:
+            raise AIResponseError("AI provider returned an empty model list")
+        return sorted(models, key=str.casefold)
 
     async def close(self) -> None:
         await self._client.aclose()

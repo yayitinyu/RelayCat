@@ -6,6 +6,7 @@
 </section>
 
 {% if request.query_params.get('saved') %}<div class="notice notice-success" role="status">设置已保存并立即生效。</div>{% endif %}
+{% if request.query_params.get('models_fetched') %}<div class="notice notice-success" role="status">已获取并保存 {{ request.query_params.get('models_fetched') }} 个渠道模型。</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="notice notice-error" role="alert">{{ request.query_params.get('error') }}</div>{% endif %}
 
 <form action="/settings/update" method="post" class="settings-stack">
@@ -47,16 +48,30 @@
         </div>
         <div class="field-grid provider-grid">
             <label>Base URL<input type="url" name="ai_base_url" maxlength="500" required value="{{ ai_base_url }}"></label>
-            <label>模型名称<input class="code-input" type="text" name="ai_model" maxlength="120" required value="{{ ai_model }}"></label>
+            <label>API Key
+                <input class="code-input api-key-input" type="password" name="ai_api_key" maxlength="512" autocomplete="new-password" placeholder="{% if ai_has_key %}****************{% else %}输入 API Key{% endif %}" aria-describedby="key-state">
+            </label>
         </div>
-        <label>API Key
-            <input class="code-input" type="password" name="ai_api_key" maxlength="512" autocomplete="new-password" aria-describedby="key-state">
-        </label>
-        <div id="key-state" class="key-state">
-            <span>留空会保留当前密钥。页面不会回显密钥；后台保存时会使用 <code>RELAYCAT_SECRET_KEY</code> 加密。</span>
+        <div id="key-state" class="key-state provider-key-state">
+            <span>{% if ai_has_key %}星号表示密钥已配置。{% endif %}真实密钥不会回显；输入新值才会替换，并使用 <code>RELAYCAT_SECRET_KEY</code> 加密。</span>
             <span>当前来源：{% if ai_key_source == 'admin' %}管理后台加密配置{% elif ai_key_source == 'environment' %}环境变量{% else %}尚未配置{% endif %}</span>
         </div>
         {% if ai_has_managed_key %}<label class="check-row"><input type="checkbox" name="clear_ai_api_key" value="true"><span>删除后台保存的密钥{% if ai_key_source == 'admin' %}，之后会回退到环境变量{% endif %}</span></label>{% endif %}
+        <div class="model-picker">
+            <label>当前使用模型
+                <select class="code-input" name="ai_model" required>
+                    {% for model in saved_ai_models %}<option value="{{ model }}" {% if model == ai_model %}selected{% endif %}>{{ model }}</option>{% endfor %}
+                </select>
+            </label>
+            <div class="model-fetch-action">
+                <span>已保存 {{ saved_ai_models|length }} 个模型</span>
+                <button class="button button-secondary button-small" type="submit" formaction="/settings/ai/models/fetch" formmethod="post" formnovalidate>获取并保存渠道模型</button>
+            </div>
+        </div>
+        <details class="advanced-panel model-manual-panel">
+            <summary>手动添加渠道未列出的模型</summary>
+            <label>自定义模型名称<input class="code-input" type="text" name="ai_model_custom" maxlength="200" placeholder="例如：gpt-4.1-mini"></label>
+        </details>
         {% if not secret_key_ready %}<div class="notice notice-warning">当前仍使用默认 <code>RELAYCAT_SECRET_KEY</code>。为防止密钥可被解密，后台暂不接受新的 API Key；请先设置随机长字符串并重启。</div>{% endif %}
     </section>
 
