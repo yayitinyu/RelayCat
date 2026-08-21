@@ -1,38 +1,38 @@
 FROM python:3.12-slim AS builder
 
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 WORKDIR /build
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc \
-    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
-RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+RUN python -m venv /opt/relaycat \
+    && /opt/relaycat/bin/pip install --no-compile -r requirements.txt
 
 FROM python:3.12-slim
 
 ARG VERSION=latest
 LABEL org.opencontainers.image.title="RelayCat" \
-      org.opencontainers.image.description="Telegram relay and Business chat automation" \
+      org.opencontainers.image.description="Telegram message relay and abuse protection" \
+      org.opencontainers.image.source="https://github.com/yayitinyu/RelayCat" \
       org.opencontainers.image.version="${VERSION}"
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+ENV PATH=/opt/relaycat/bin:$PATH \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     RELAYCAT_HOST=0.0.0.0 \
     RELAYCAT_PORT=8765 \
     RELAYCAT_DATA_DIR=/data \
     RELAYCAT_DB_URL=sqlite+aiosqlite:////data/relaycat.db
 
-WORKDIR /app
-COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir /wheels/* \
-    && rm -rf /wheels \
-    && addgroup --system --gid 10001 relaycat \
+RUN addgroup --system --gid 10001 relaycat \
     && adduser --system --uid 10001 --ingroup relaycat --home /app relaycat \
-    && mkdir -p /data \
-    && chown -R relaycat:relaycat /app /data
+    && mkdir -p /app /data \
+    && chown relaycat:relaycat /app /data
 
+WORKDIR /app
+COPY --from=builder /opt/relaycat /opt/relaycat
 COPY --chown=relaycat:relaycat app ./app
-USER relaycat
 
+USER relaycat
 VOLUME ["/data"]
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

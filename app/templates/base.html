@@ -3,28 +3,27 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="RelayCat Telegram 消息中继与聊天自动化管理后台">
-    <meta name="theme-color" content="#fff8f6">
+    <meta name="description" content="RelayCat Telegram 消息中继与防护">
+    <meta name="theme-color" content="#fffaf8">
     <title>{{ page_title }} · RelayCat</title>
     <link rel="icon" type="image/png" href="/static/favicon.png?v=3">
     <link rel="stylesheet" href="/static/fonts/ChillRoundFRegular/result.css">
-    <link rel="stylesheet" href="/static/fonts/MapleMono-CN-Regular/result.css">
-    <link rel="stylesheet" href="/static/fonts/Lora-VariableFont_wght/result.css">
-    <link rel="stylesheet" href="/static/css/app.css?v=4">
+    <link rel="stylesheet" href="/static/css/app.css?v=5">
+    <script src="/static/js/app.js?v=1" defer></script>
 </head>
 <body class="{% if active_path == '/login' %}login-page{% endif %}">
     <a class="skip-link" href="#main-content">跳到主要内容</a>
     {% if active_path != '/login' %}
     <header class="site-header">
         <a class="brand" href="/" aria-label="RelayCat 首页">
-            <img src="/static/images/relaycat-logo.png" width="44" height="44" alt="">
-            <span><strong>RelayCat</strong><small>message concierge</small></span>
+            <img src="/static/images/relaycat-logo.png" width="40" height="40" alt="">
+            <strong>RelayCat</strong>
         </a>
         <nav class="main-nav" aria-label="主导航">
             <a href="/" {% if active_path == '/' %}aria-current="page"{% endif %}>概览</a>
-            <a href="/rules" {% if active_path.startswith('/rules') %}aria-current="page"{% endif %}>过滤规则</a>
-            <a href="/logs" {% if active_path.startswith('/logs') %}aria-current="page"{% endif %}>安全日志</a>
-            <a href="/settings" {% if active_path.startswith('/settings') %}aria-current="page"{% endif %}>安全与 AI</a>
+            <a href="/rules" {% if active_path.startswith('/rules') %}aria-current="page"{% endif %}>规则</a>
+            <a href="/logs" {% if active_path.startswith('/logs') %}aria-current="page"{% endif %}>日志</a>
+            <a href="/settings" {% if active_path.startswith('/settings') %}aria-current="page"{% endif %}>防护</a>
         </nav>
         <form method="post" action="/logout">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -36,9 +35,5 @@
     <main id="main-content" class="page-shell">
         {% block content %}{% endblock %}
     </main>
-    <footer class="site-footer">
-        <span>RelayCat</span>
-        <span>轻量运行，消息由你掌控。</span>
-    </footer>
 </body>
 </html>

@@ -53,62 +53,61 @@ MESSAGE_TYPE_LABELS = {
     "other": "其他",
 }
 
-DEFAULT_MODERATION_POLICY = (
-    "拦截明确的诈骗、钓鱼、恶意推广、色情招揽、暴力威胁、仇恨骚扰、"
-    "索取密码或验证码、传播恶意软件的消息。正常咨询、批评、讨论敏感主题、"
-    "引用风险词进行求助或举报时应放行。"
+_CONFUSABLES = str.maketrans(
+    {
+        "а": "a",
+        "α": "a",
+        "в": "b",
+        "β": "b",
+        "ԁ": "d",
+        "е": "e",
+        "ε": "e",
+        "ё": "e",
+        "ɡ": "g",
+        "і": "i",
+        "ї": "i",
+        "ι": "i",
+        "ј": "j",
+        "к": "k",
+        "κ": "k",
+        "ⅼ": "l",
+        "м": "m",
+        "μ": "m",
+        "ν": "v",
+        "о": "o",
+        "ο": "o",
+        "р": "p",
+        "ρ": "p",
+        "ԛ": "q",
+        "с": "c",
+        "ѕ": "s",
+        "т": "t",
+        "τ": "t",
+        "ѵ": "v",
+        "ԝ": "w",
+        "х": "x",
+        "χ": "x",
+        "у": "y",
+        "υ": "y",
+        "ɑ": "a",
+        "單": "单",
+        "幣": "币",
+        "號": "号",
+        "聯": "联",
+        "繫": "系",
+        "賺": "赚",
+        "貸": "贷",
+        "資": "资",
+        "穩": "稳",
+        "賠": "赔",
+        "磚": "砖",
+    }
 )
-
-RULE_PRESETS = {
-    "scam_solicitation": {
-        "name": "高风险诈骗招揽",
-        "description": "拦截刷单、跑分、虚假返利、博彩和虚拟币搬砖等常见话术。",
-        "rule_type": "message_content",
-        "match_mode": "contains_any",
-        "pattern": "刷单\n跑分\n稳赚不赔\n博彩平台\n裸聊\n代充返利\nUSDT 搬砖\n带单老师",
-        "action": "block",
-    },
-    "risky_links": {
-        "name": "高风险邀请与短链接",
-        "description": "拦截 Telegram 邀请链接和常被滥用的短链接。",
-        "rule_type": "message_content",
-        "match_mode": "regex",
-        "pattern": r"(?:https?://)?(?:t\.me|telegram\.me)/(?:joinchat/|\+)|(?:https?://)?(?:bit\.ly|tinyurl\.com)/",
-        "action": "block",
-    },
-    "contact_diversion": {
-        "name": "常见导流联系方式",
-        "description": "拦截要求加微信、联系客服领福利或私聊返利的话术。",
-        "rule_type": "message_content",
-        "match_mode": "contains_any",
-        "pattern": "加微信\n加V详聊\n私聊返利\n联系客服领\n进群领取",
-        "action": "block",
-    },
-    "support_impersonation": {
-        "name": "疑似客服身份冒充",
-        "description": "拦截用户名中独立出现 admin、support、service 或 customer 的账号。",
-        "rule_type": "username",
-        "match_mode": "regex",
-        "pattern": r"(?:^|[_.-])(?:admin|support|service|customer)(?:[_.-]|$)",
-        "action": "block",
-    },
-    "forwarded_messages": {
-        "name": "转发消息",
-        "description": "拦截所有带转发来源的消息，适合不接收群发内容的场景。",
-        "rule_type": "is_forwarded",
-        "match_mode": "equals",
-        "pattern": "true",
-        "action": "block",
-    },
-    "all_links": {
-        "name": "所有外部链接",
-        "description": "拦截任何含网页链接的消息，强度较高，建议按需启用。",
-        "rule_type": "has_link",
-        "match_mode": "equals",
-        "pattern": "true",
-        "action": "block",
-    },
-}
+_LINK_PATTERN = re.compile(
+    r"(?i)(?:https?://|www\.|(?:t|telegram)\.me/|"
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,24}"
+    r"(?:[/?:#][^\s<]*)?)"
+)
 
 
 @dataclass(frozen=True)
@@ -119,7 +118,17 @@ class RuleMatch:
 
 
 def normalize_text(value: str) -> str:
-    return unicodedata.normalize("NFKC", value).casefold().strip()
+    normalized = unicodedata.normalize("NFKD", value).casefold().translate(_CONFUSABLES)
+    visible = "".join(
+        char
+        for char in normalized
+        if unicodedata.category(char) not in {"Cf", "Mn", "Me"}
+    )
+    return " ".join(visible.split())
+
+
+def compact_text(value: str) -> str:
+    return "".join(char for char in normalize_text(value) if char.isalnum())
 
 
 def keyword_values(pattern: str) -> list[str]:
@@ -154,12 +163,32 @@ def message_has_link(message: Any) -> bool:
         *(getattr(message, "entities", None) or []),
         *(getattr(message, "caption_entities", None) or []),
     ]
-    if any(getattr(entity, "type", None) in {"url", "text_link"} for entity in entities):
+    if any(
+        getattr(entity, "type", None) in {"url", "text_link"} for entity in entities
+    ):
         return True
     text = getattr(message, "text", None) or getattr(message, "caption", None) or ""
-    return bool(
-        re.search(r"(?i)(?:https?://|www\.|(?:t|telegram)\.me/)[^\s<]+", text)
+    normalized = normalize_text(text)
+    normalized = re.sub(
+        r"\[\s*(?:\.|dot|点)\s*\]|\(\s*(?:\.|dot|点)\s*\)|"
+        r"(?<=\w)\s+(?:dot|点)\s+(?=\w)",
+        ".",
+        normalized,
+        flags=re.IGNORECASE,
     )
+    normalized = re.sub(
+        r"\bh\s*t\s*t\s*p\s*(s?)\s*:",
+        lambda match: f"http{match.group(1)}:",
+        normalized,
+    )
+    normalized = re.sub(
+        r"\bh\s*x\s*x\s*p\s*(s?)\s*:",
+        lambda match: f"http{match.group(1)}:",
+        normalized,
+    )
+    normalized = re.sub(r"\bw\s*w\s*w\s*\.", "www.", normalized)
+    normalized = re.sub(r"\s*([./:])\s*", r"\1", normalized)
+    return bool(_LINK_PATTERN.search(normalized))
 
 
 def _command_value(message: Any) -> str:
@@ -198,7 +227,7 @@ def matches_pattern(value: str, pattern: str, match_mode: str) -> bool:
             return bool(
                 safe_regex.search(
                     pattern,
-                    value[:8000],
+                    normalized_value[:8000],
                     flags=safe_regex.IGNORECASE,
                     timeout=0.05,
                 )
@@ -209,13 +238,22 @@ def matches_pattern(value: str, pattern: str, match_mode: str) -> bool:
     values = keyword_values(pattern)
     if not values:
         return False
-    if match_mode == "equals":
-        return any(normalized_value == item for item in values)
-    if match_mode == "starts_with":
-        return any(normalized_value.startswith(item) for item in values)
-    if match_mode == "ends_with":
-        return any(normalized_value.endswith(item) for item in values)
-    return any(item in normalized_value for item in values)
+    compact_value = compact_text(normalized_value)
+
+    def matches(item: str) -> bool:
+        pairs = [(normalized_value, item)]
+        compact_item = compact_text(item)
+        if len(compact_item) >= 2:
+            pairs.append((compact_value, compact_item))
+        if match_mode == "equals":
+            return any(candidate == expected for candidate, expected in pairs)
+        if match_mode == "starts_with":
+            return any(candidate.startswith(expected) for candidate, expected in pairs)
+        if match_mode == "ends_with":
+            return any(candidate.endswith(expected) for candidate, expected in pairs)
+        return any(expected in candidate for candidate, expected in pairs)
+
+    return any(matches(item) for item in values)
 
 
 def rule_matches(rule: Rule, message: Any, user: User) -> bool:
@@ -253,10 +291,20 @@ def validate_rule_values(
         return "匹配方式无效"
     if not pattern.strip() or len(pattern) > 500:
         return "规则内容必须为 1–500 个字符"
-    if rule_type in BOOLEAN_RULE_TYPES and normalize_text(pattern) not in {"true", "false"}:
+    if rule_type in BOOLEAN_RULE_TYPES and normalize_text(pattern) not in {
+        "true",
+        "false",
+    }:
         return "开关型规则只能匹配“是”或“否”"
-    if rule_type == "message_type" and normalize_text(pattern) not in MESSAGE_TYPE_LABELS:
+    if rule_type in BOOLEAN_RULE_TYPES and match_mode != "equals":
+        return "开关型规则只能使用完全匹配"
+    if (
+        rule_type == "message_type"
+        and normalize_text(pattern) not in MESSAGE_TYPE_LABELS
+    ):
         return "消息类型无效"
+    if rule_type == "message_type" and match_mode != "equals":
+        return "消息类型只能使用完全匹配"
     if match_mode == "regex":
         try:
             safe_regex.compile(pattern)
