@@ -2,16 +2,16 @@
 
 {% block content %}
 <section class="page-heading compact">
-    <div><p class="eyebrow">Security timeline</p><h1>安全日志</h1><p>查看拦截、限流、封禁、AI 与中继结果；日志不保存消息正文或 API Key。</p></div>
+    <div><h1>安全日志</h1><p>不保存消息正文。</p></div>
 </section>
 
-<section class="log-toolbar" aria-label="日志筛选">
+<nav class="log-toolbar" aria-label="日志筛选">
     <a href="/logs" {% if not selected_event %}aria-current="page"{% endif %}>全部</a>
     {% for value, label in event_labels.items() %}<a href="/logs?event={{ value }}" {% if selected_event == value %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
-</section>
+</nav>
 
-<section class="panel data-panel log-panel" aria-labelledby="log-list-title">
-    <div class="panel-heading"><div><p class="section-kicker">Audit trail</p><h2 id="log-list-title">最近事件</h2></div><span class="quiet">共 {{ total }} 条</span></div>
+<section class="panel log-panel" aria-labelledby="log-list-title">
+    <div class="panel-heading"><h2 id="log-list-title">最近事件</h2><span class="quiet">{{ total }} 条</span></div>
     {% if entries %}
     <div class="log-list">
         {% for entry in entries %}
@@ -19,8 +19,11 @@
             <time datetime="{{ entry.created_at.isoformat() }}">{{ entry.created_at.strftime('%m-%d %H:%M:%S') }}</time>
             <span class="log-dot log-{{ entry.outcome }}" aria-hidden="true"></span>
             <div>
-                <div class="log-title"><strong>{{ event_labels.get(entry.event_type, entry.event_type) }}</strong><span class="status {% if entry.outcome in ['blocked','banned','error'] %}status-danger{% elif entry.outcome in ['allowed','delivered','saved','unbanned'] %}status-ok{% endif %}">{{ entry.outcome }}</span></div>
-                <p>{{ entry.reason or '事件已记录' }}</p>
+                <div class="log-title">
+                    <strong>{{ event_labels.get(entry.event_type, entry.event_type) }}</strong>
+                    <span class="status {% if entry.outcome in ['blocked','banned','error'] %}status-danger{% elif entry.outcome in ['verified','delivered','saved','unbanned','enabled'] %}status-ok{% endif %}">{{ outcome_labels.get(entry.outcome, entry.outcome) }}</span>
+                </div>
+                {% if entry.reason %}<p>{{ entry.reason }}</p>{% endif %}
                 <small>{% if entry.user_id %}用户 <code>{{ entry.user_id }}</code>{% if entry.username %} · @{{ entry.username }}{% endif %}{% endif %}{% if entry.message_type %} · {{ entry.message_type }}{% endif %}{% if entry.rule_id %} · 规则 #{{ entry.rule_id }}{% endif %}</small>
             </div>
         </article>
@@ -31,6 +34,6 @@
         <span>第 {{ page }} 页</span>
         {% if has_next %}<a class="button button-secondary button-small" href="/logs?page={{ page + 1 }}{% if selected_event %}&event={{ selected_event }}{% endif %}">下一页</a>{% endif %}
     </nav>
-    {% else %}<div class="empty-state"><strong>还没有日志</strong><p>收到消息或修改设置后，相关事件会显示在这里。</p></div>{% endif %}
+    {% else %}<div class="empty-state">暂无日志</div>{% endif %}
 </section>
 {% endblock %}

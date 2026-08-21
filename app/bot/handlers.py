@@ -1,59 +1,53 @@
 import html
 import logging
+from math import ceil
 import re
 
-import httpx
 from aiogram import F, Router
-from aiogram.filters import CommandStart, Command
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message, ReactionTypeEmoji
 from aiogram.types import User as TgUser
-from sqlalchemy.future import select
-from sqlalchemy import update
+from sqlalchemy import select, update
 
-from app.bot.loader import ai_client, bot, dp
+from app.bot.loader import bot, dp
+from app.bot.verification import render_verification_challenge
 from app.core.config import settings
 from app.database.core import AsyncSessionLocal
-from app.database.models import User, MessageRoute, Setting
-from app.bot.verification import generate_verification_challenge
-from app.services.ai import AIConfigurationError, AIResponseError
-from app.services.filtering import (
-    DEFAULT_MODERATION_POLICY,
-    detect_message_type,
-    evaluate_rules,
-    is_bot_command,
-)
+from app.database.models import MessageRoute, User, utc_now
+from app.services.filtering import detect_message_type, evaluate_rules, is_bot_command
 from app.services.protection import (
     add_audit_log,
+    fingerprint_content,
     log_event,
     record_interception,
     record_message_and_check_rate_limit,
     release_expired_ban,
 )
-from app.services.runtime_settings import (
-    get_ai_provider_config,
-    get_bool_setting,
-    get_int_setting,
-    get_setting,
+from app.services.runtime_settings import get_bool_setting
+from app.services.verification import (
+    bind_challenge_message,
+    issue_challenge,
+    verify_choice,
 )
-router = Router()
+
+router = Router(name="relay")
 dp.include_router(router)
 logger = logging.getLogger(__name__)
 
-async def get_or_create_user(tg_user: TgUser):
+
+async def get_or_create_user(tg_user: TgUser) -> User:
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.id == tg_user.id))
-        user = result.scalar_one_or_none()
-        if not user:
+        user = await session.get(User, tg_user.id)
+        if user is None:
             user = User(
                 id=tg_user.id,
                 username=tg_user.username,
                 first_name=tg_user.first_name,
                 last_name=tg_user.last_name,
-                is_verified=False
+                is_verified=False,
             )
             session.add(user)
-            await session.commit()
-            await session.refresh(user)
         elif (
             user.username != tg_user.username
             or user.first_name != tg_user.first_name
@@ -62,111 +56,117 @@ async def get_or_create_user(tg_user: TgUser):
             user.username = tg_user.username
             user.first_name = tg_user.first_name
             user.last_name = tg_user.last_name
-            await session.commit()
+        await session.commit()
+        await session.refresh(user)
         return user
 
+
+def _lockout_message(locked_until) -> str:
+    remaining = max(1, ceil((locked_until - utc_now()).total_seconds() / 60))
+    return f"尝试次数过多，请在约 {remaining} 分钟后再发送 /start。"
+
+
 @router.message(CommandStart())
-async def cmd_start(message: Message):
-    if message.chat.type != 'private':
+async def cmd_start(message: Message) -> None:
+    if message.chat.type != "private" or message.from_user is None:
+        return
+    user = await get_or_create_user(message.from_user)
+    if user.is_verified or user.id == settings.admin_id:
+        await message.answer("验证已完成，直接发送消息即可。")
         return
 
-    user = await get_or_create_user(message.from_user)
-    
-    if user.is_verified or message.from_user.id == settings.admin_id:
-        await message.answer("Hello again! You are verified. Messages you send here will be forwarded to the admin.")
-    else:
-        # Start verification
-        target, markup = generate_verification_challenge()
-        # Store target in state or just check callback?
-        # A simple stateless way is to encode target in callback data of correct answer, but that's insecure.
-        # Better: We encode the target in the text instructions.
-        await message.answer(
-            f"Welcome! To prove you are human, please tap the {target} button below:",
-            reply_markup=markup
-        )
+    result = await issue_challenge(user.id, message.chat.id)
+    if result.status == "locked" and result.locked_until:
+        await message.answer(_lockout_message(result.locked_until))
+        return
+    if result.prompt is None:
+        logger.error("Could not create verification prompt for user %s", user.id)
+        await message.answer("暂时无法创建验证，请稍后重试。")
+        return
+
+    text, markup = render_verification_challenge(result.prompt)
+    sent = await message.answer(text, reply_markup=markup)
+    if not await bind_challenge_message(
+        user.id, result.prompt.challenge_id, sent.message_id
+    ):
+        await sent.edit_text("验证已更新，请重新发送 /start。")
+
 
 @router.callback_query(F.data.startswith("verify:"))
-async def on_verify_callback(callback: CallbackQuery):
-    emoji_clicked = callback.data.split(":")[1]
-    # We need to know what the target was.
-    # Parsing the message text is a hack but stateless and simple for this level.
-    # Text: "Welcome! ... tap the 🍎 button below:"
-    
-    msg_text = callback.message.text
-    if "tap the" not in msg_text:
-        await callback.answer("Session expired or invalid.", show_alert=True)
+async def on_verify_callback(callback: CallbackQuery) -> None:
+    data = callback.data or ""
+    parts = data.split(":", 2)
+    message = callback.message
+    chat = getattr(message, "chat", None)
+    message_id = getattr(message, "message_id", None)
+    if len(parts) != 3 or chat is None or message_id is None:
+        await callback.answer("验证请求无效。", show_alert=True)
         return
-        
-    target_emoji = msg_text.split("tap the")[1].strip().split(" ")[0]
-    
-    if emoji_clicked == target_emoji:
-        # Verify user
-        async with AsyncSessionLocal() as session:
-            await session.execute(
-                update(User).where(User.id == callback.from_user.id).values(is_verified=True)
+
+    result = await verify_choice(
+        user_id=callback.from_user.id,
+        chat_id=chat.id,
+        message_id=message_id,
+        challenge_id=parts[1],
+        choice=parts[2],
+    )
+    try:
+        if result.status == "passed":
+            await callback.answer("验证完成")
+            await message.edit_text("验证完成。现在可以发送消息。")
+        elif result.status in {"progress", "retry"} and result.prompt:
+            text, markup = render_verification_challenge(
+                result.prompt,
+                retry=result.status == "retry",
             )
-            await session.commit()
-            
-        await callback.message.edit_text("✅ Verified! You can now send messages to the admin.")
-    else:
-        # Wrong answer, retry
-        target, markup = generate_verification_challenge()
-        await callback.message.edit_text(
-            f"Wrong! Try again. Tap the {target}:",
-            reply_markup=markup
-        )
+            await callback.answer(
+                "顺序不对，已重置" if result.status == "retry" else ""
+            )
+            await message.edit_text(text, reply_markup=markup)
+        elif result.status == "locked" and result.locked_until:
+            await callback.answer("验证已锁定", show_alert=True)
+            await message.edit_text(_lockout_message(result.locked_until))
+        elif result.status == "expired":
+            await callback.answer("挑战已过期", show_alert=True)
+            await message.edit_text("挑战已过期，请重新发送 /start。")
+        else:
+            await callback.answer("挑战无效或已被替换。", show_alert=True)
+    except TelegramBadRequest:
+        logger.info("Verification message %s could not be updated", message_id)
 
 
 async def get_reply_target_id(message: Message) -> int | None:
-    """
-    Try to find the target user ID from a reply message.
-    1. Check MessageRoute in DB (most reliable for active sessions)
-    2. Check Info Card text (stateless fallback)
-    3. Check Forward Origin (stateless fallback for forwards)
-    """
-    reply_msg = message.reply_to_message
-    if not reply_msg:
+    reply = message.reply_to_message
+    if reply is None:
         return None
 
-    # 1. Check DB Route
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(MessageRoute).where(MessageRoute.admin_message_id == reply_msg.message_id)
+            select(MessageRoute.user_id).where(
+                MessageRoute.admin_message_id == reply.message_id
+            )
         )
-        route = result.scalar_one_or_none()
-        if route:
-            return route.user_id
+        user_id = result.scalars().first()
+        if user_id:
+            return int(user_id)
 
-    # 2. Check Info Card Text (e.g. "ID: 123456")
-    text = reply_msg.text or reply_msg.caption or ""
-    # Look for "ID: 123456" pattern
+    text = reply.text or reply.caption or ""
     match = re.search(r"ID:\s*(\d+)", text)
     if match:
         return int(match.group(1))
 
-    # 3. Check Forward Origin
-    # Check if the message is a forward from a user
-    if reply_msg.forward_origin and getattr(reply_msg.forward_origin, 'type', '') == 'user':
-        return reply_msg.forward_origin.sender_user.id
-        
+    origin = reply.forward_origin
+    if origin and getattr(origin, "type", "") == "user":
+        return origin.sender_user.id
     return None
 
-# ---------- Admin Commands ----------
-@router.message(Command("ban"), F.from_user.id == settings.admin_id)
-async def cmd_ban(message: Message):
-    # Extract ID from args or reply
-    target_id = None
-    args = message.text.split()
-    
-    if len(args) > 1 and args[1].isdigit():
-        target_id = int(args[1])
-    elif message.reply_to_message:
-        target_id = await get_reply_target_id(message)
-    
-    if not target_id:
-        await message.answer("⚠️ Usage: /ban <user_id> or reply to a user message.")
-        return
 
+@router.message(Command("ban"), F.from_user.id == settings.admin_id)
+async def cmd_ban(message: Message) -> None:
+    target_id = await _command_target(message)
+    if target_id is None:
+        await message.answer("用法：/ban <用户 ID>，或回复一条中继消息。")
+        return
     async with AsyncSessionLocal() as session:
         await session.execute(
             update(User)
@@ -181,23 +181,15 @@ async def cmd_ban(message: Message):
             reason="Telegram 管理员命令",
         )
         await session.commit()
-    
-    await message.answer(f"🔒 User {target_id} has been banned.")
+    await message.answer(f"已封禁用户 {target_id}。")
+
 
 @router.message(Command("unban"), F.from_user.id == settings.admin_id)
-async def cmd_unban(message: Message):
-    target_id = None
-    args = message.text.split()
-    
-    if len(args) > 1 and args[1].isdigit():
-        target_id = int(args[1])
-    elif message.reply_to_message:
-        target_id = await get_reply_target_id(message)
-
-    if not target_id:
-        await message.answer("⚠️ Usage: /unban <user_id> or reply to a user message.")
+async def cmd_unban(message: Message) -> None:
+    target_id = await _command_target(message)
+    if target_id is None:
+        await message.answer("用法：/unban <用户 ID>，或回复一条中继消息。")
         return
-
     async with AsyncSessionLocal() as session:
         await session.execute(
             update(User)
@@ -212,45 +204,62 @@ async def cmd_unban(message: Message):
             reason="Telegram 管理员命令",
         )
         await session.commit()
-    
-    await message.answer(f"✅ User {target_id} has been unbanned.")
+    await message.answer(f"已解除用户 {target_id} 的封禁。")
 
-# ---------- Message Forwarding (User -> Admin) ----------
+
+async def _command_target(message: Message) -> int | None:
+    parts = (message.text or "").split()
+    if len(parts) > 1 and parts[1].isdigit():
+        return int(parts[1])
+    if message.reply_to_message:
+        return await get_reply_target_id(message)
+    return None
+
+
+def _fingerprint_source(message: Message, message_type: str) -> str:
+    content = (message.text or message.caption or "").strip()
+    if content:
+        return f"{message_type}\0{content}"
+    media = getattr(message, message_type, None)
+    if isinstance(media, list) and media:
+        media = media[-1]
+    unique_id = getattr(media, "file_unique_id", None)
+    return f"{message_type}\0{unique_id or ''}"
+
+
 @router.message(F.chat.type == "private")
-async def handle_user_message(message: Message):
+async def handle_user_message(message: Message) -> None:
+    if message.from_user is None:
+        return
     if message.from_user.id == settings.admin_id:
         if message.reply_to_message:
             await handle_admin_reply(message)
         return
 
-    # Check verification
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.id == message.from_user.id))
-        user = result.scalar_one_or_none()
-        
-    # Verification Check
-    if message.from_user.id != settings.admin_id and (not user or not user.is_verified):
-        await message.answer("Please type /start to verify yourself first.")
+    user = await get_or_create_user(message.from_user)
+    if not user.is_verified:
+        await message.answer("请先发送 /start 完成人机验证。")
         return
-        
     if user.is_banned:
-        if await release_expired_ban(user.id):
-            user.is_banned = False
-            user.banned_until = None
-        else:
+        if not await release_expired_ban(user.id):
             return
+        user.is_banned = False
+        user.banned_until = None
 
     message_type = detect_message_type(message)
     rate_result = await record_message_and_check_rate_limit(
         user_id=user.id,
         username=user.username,
         message_type=message_type,
+        content_fingerprint=fingerprint_content(
+            _fingerprint_source(message, message_type)
+        ),
     )
     if rate_result.blocked:
         if rate_result.auto_banned:
-            await message.answer("🚫 发送过于频繁，账号已被自动封禁。")
+            await message.answer("发送过于频繁，账号已被自动封禁。")
         else:
-            await message.answer("⏳ 发送太快了，请稍后再试。")
+            await message.answer("发送过于频繁，请稍后再试。")
         return
 
     rule_match = await evaluate_rules(message, user)
@@ -265,10 +274,12 @@ async def handle_user_message(message: Message):
             details={"action": rule_match.action},
         )
         if rule_match.action == "block":
-            if result.auto_banned:
-                await message.answer("🚫 消息已拦截；因多次触发规则，账号已被自动封禁。")
-            else:
-                await message.answer("🚫 这条消息未通过安全规则。")
+            text = (
+                "消息已拦截；账号因多次触发规则被自动封禁。"
+                if result.auto_banned
+                else "这条消息未通过安全规则。"
+            )
+            await message.answer(text)
         return
 
     if rule_match.rule_id is None and is_bot_command(message):
@@ -277,103 +288,46 @@ async def handle_user_message(message: Message):
             user_id=user.id,
             username=user.username,
             message_type=message_type,
-            reason="未在白名单中放行的 Bot 命令",
+            reason="未放行的 Bot 命令",
             details={"action": "drop"},
         )
         return
-
-    # An explicit allow rule is a deliberate whitelist and skips AI review.
-    if rule_match.rule_id is None and await get_bool_setting("moderation_ai_enabled", False):
-        content = (message.text or message.caption or "").strip()
-        if content:
-            provider = await get_ai_provider_config()
-            policy = await get_setting("moderation_ai_policy", DEFAULT_MODERATION_POLICY)
-            threshold = await get_int_setting(
-                "moderation_ai_threshold", 80, minimum=50, maximum=100
-            )
-            try:
-                decision = await ai_client.review_message(
-                    content,
-                    policy or DEFAULT_MODERATION_POLICY,
-                    provider,
-                )
-                if decision.should_block and decision.confidence * 100 >= threshold:
-                    result = await record_interception(
-                        event_type="ai_blocked",
-                        user_id=user.id,
-                        username=user.username,
-                        message_type=message_type,
-                        reason=decision.reason,
-                        details={
-                            "category": decision.category,
-                            "confidence": round(decision.confidence, 3),
-                        },
-                    )
-                    if result.auto_banned:
-                        await message.answer("🚫 消息未通过 AI 安全审查；账号已被自动封禁。")
-                    else:
-                        await message.answer("🚫 这条消息未通过 AI 安全审查。")
-                    return
-                await log_event(
-                    event_type="ai_review",
-                    outcome="allowed",
-                    user_id=user.id,
-                    username=user.username,
-                    message_type=message_type,
-                    details={
-                        "category": decision.category,
-                        "confidence": round(decision.confidence, 3),
-                    },
-                )
-            except (AIConfigurationError, AIResponseError, httpx.HTTPError):
-                logger.exception("AI moderation failed for user %s", user.id)
-                await log_event(
-                    event_type="ai_review",
-                    outcome="error",
-                    user_id=user.id,
-                    username=user.username,
-                    message_type=message_type,
-                    reason="AI 审查失败，已按安全设置放行",
-                )
-
     if not settings.enable_forwarding:
-        await message.answer("Message forwarding is temporarily disabled.")
+        await message.answer("消息中继暂时关闭。")
         return
 
-    # Forward to Admin
-    # We use copy_message or forward_message. 
-    # RelayCat original design: Forward message, then send metadata card.
-    
     try:
-        # Forward original
-        fwd = await message.forward(settings.admin_id)
-        
-        # Send info card
-        info_text = (
-            f"👤 <b>User Info</b>\n"
-            f"ID: <code>{user.id}</code>\n"
-            f"Name: {html.escape(user.first_name or '')} {html.escape(user.last_name or '')}\n"
-            f"Username: @{html.escape(user.username or 'none')}\n"
-            f"<i>Reply to this or the forwarded message to answer.</i>"
+        forwarded = await message.forward(settings.admin_id)
+        display_name = (
+            " ".join(part for part in (user.first_name, user.last_name) if part).strip()
+            or "未命名用户"
         )
-        card = await bot.send_message(settings.admin_id, info_text, reply_to_message_id=fwd.message_id)
-        
-        # Save route
+        username = f"@{html.escape(user.username)}" if user.username else "无用户名"
+        card = await bot.send_message(
+            settings.admin_id,
+            (
+                f"<b>{html.escape(display_name)}</b> · {username}\n"
+                f"ID: <code>{user.id}</code>\n"
+                "回复此消息即可回传。"
+            ),
+            reply_to_message_id=forwarded.message_id,
+        )
         async with AsyncSessionLocal() as session:
-            # Route for forwarding
-            session.add(MessageRoute(
-                user_id=user.id,
-                admin_message_id=fwd.message_id,
-                user_message_id=message.message_id
-            ))
-            # Route for card
-            session.add(MessageRoute(
-                user_id=user.id,
-                admin_message_id=card.message_id,
-                user_message_id=message.message_id
-            ))
+            session.add_all(
+                [
+                    MessageRoute(
+                        user_id=user.id,
+                        admin_message_id=forwarded.message_id,
+                        user_message_id=message.message_id,
+                    ),
+                    MessageRoute(
+                        user_id=user.id,
+                        admin_message_id=card.message_id,
+                        user_message_id=message.message_id,
+                    ),
+                ]
+            )
             await session.commit()
-
         await log_event(
             event_type="relay_forwarded",
             outcome="delivered",
@@ -381,7 +335,6 @@ async def handle_user_message(message: Message):
             username=user.username,
             message_type=message_type,
         )
-            
     except Exception:
         logger.exception("Failed to forward message %s", message.message_id)
         await log_event(
@@ -393,27 +346,16 @@ async def handle_user_message(message: Message):
             reason="转发给管理员失败",
         )
 
-# ---------- Admin Reply (Admin -> User) ----------
-async def handle_admin_reply(message: Message):
-    # Check if reply is to a routed message
-    user_id = await get_reply_target_id(message)
-        
-    if not user_id:
-        await message.answer("⚠️ Route not found. Cannot reply to this message.")
-        return
-        
-    # Send back to user
-    try:
-        # We use copy_message to preserve content type (text/photo/etc)
-        await message.copy_to(chat_id=user_id)
-        
-        # Confirm Reply (Thumps Up) if enabled
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(Setting).where(Setting.key == "confirm_reply"))
-            setting = res.scalar_one_or_none()
-            if setting and setting.value == "true":
-                 await message.react([ReactionTypeEmoji(emoji="👍")])
-            
-    except Exception as e:
-        await message.reply(f"❌ Failed to reach user: {e}")
 
+async def handle_admin_reply(message: Message) -> None:
+    user_id = await get_reply_target_id(message)
+    if user_id is None:
+        await message.answer("找不到对应用户，无法回复。")
+        return
+    try:
+        await message.copy_to(chat_id=user_id)
+        if await get_bool_setting("confirm_reply"):
+            await message.react([ReactionTypeEmoji(emoji="👍")])
+    except Exception:
+        logger.exception("Failed to relay admin reply to user %s", user_id)
+        await message.reply("回复发送失败，请查看服务日志。")

@@ -1,4 +1,4 @@
-from pydantic import Field, SecretStr, field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,32 +29,11 @@ class Settings(BaseSettings):
     # Relay
     enable_forwarding: bool = True
 
-    # OpenAI-compatible Chat Completions API
-    ai_enabled: bool = False
-    ai_base_url: str = "https://api.openai.com/v1"
-    ai_api_key: SecretStr | None = None
-    ai_model: str = "gpt-4o-mini"
-    ai_system_prompt: str = Field(
-        default=(
-            "你是账号主人的聊天助理。请使用与对方相同的语言，简洁、礼貌地回复。"
-            "不要编造事实、承诺付款或泄露隐私；不确定时说明需要账号主人确认。"
-        )
-    )
-    ai_timeout_seconds: float = 30.0
-    ai_history_limit: int = 12
-
     @field_validator("port")
     @classmethod
     def validate_port(cls, value: int) -> int:
         if not 1 <= value <= 65535:
             raise ValueError("port must be between 1 and 65535")
-        return value
-
-    @field_validator("ai_history_limit")
-    @classmethod
-    def validate_history_limit(cls, value: int) -> int:
-        if not 2 <= value <= 50:
-            raise ValueError("ai_history_limit must be between 2 and 50")
         return value
 
     @property

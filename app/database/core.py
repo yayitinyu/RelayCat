@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import settings
 from app.database.models import Base, Rule
+from app.services.rule_presets import RULE_PRESETS, RulePreset
 
 logger = logging.getLogger(__name__)
 
@@ -26,35 +27,46 @@ async def init_db() -> None:
         await connection.run_sync(_migrate_existing_tables)
 
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Rule.id).limit(1))
-        if result.scalar_one_or_none() is None:
-            session.add_all(
-                [
-                    Rule(
-                        name="高风险诈骗招揽",
-                        rule_type="message_content",
-                        match_mode="contains_any",
-                        pattern="刷单\n跑分\n稳赚不赔\n博彩平台\n裸聊\n代充返利\nUSDT 搬砖\n带单老师",
-                        action="block",
-                    ),
-                    Rule(
-                        name="高风险邀请与短链接",
-                        rule_type="message_content",
-                        match_mode="regex",
-                        pattern=r"(?:https?://)?(?:t\.me|telegram\.me)/(?:joinchat/|\+)|(?:https?://)?(?:bit\.ly|tinyurl\.com)/",
-                        action="block",
-                    ),
-                    Rule(
-                        name="常见导流联系方式",
-                        rule_type="message_content",
-                        match_mode="contains_any",
-                        pattern="加微信\n加V详聊\n私聊返利\n联系客服领\n进群领取",
-                        action="block",
-                    ),
-                ]
-            )
+        changed = await _sync_rule_presets(session)
+        if changed:
             await session.commit()
-            logger.info("Default filtering rules created")
+            logger.info("Filtering presets synchronized")
+
+
+async def _sync_rule_presets(session: AsyncSession) -> bool:
+    preset_ids = set(RULE_PRESETS)
+    result = await session.execute(select(Rule).where(Rule.preset_id.in_(preset_ids)))
+    rules_by_preset = {rule.preset_id: rule for rule in result.scalars()}
+    changed = False
+
+    for preset in RULE_PRESETS.values():
+        rule = rules_by_preset.get(preset.preset_id)
+        if rule is None:
+            rule = await session.scalar(select(Rule).where(Rule.name == preset.name))
+            if rule is not None and not _is_legacy_preset(rule, preset):
+                continue
+            if rule is None and not preset.enabled_by_default:
+                continue
+            if rule is None:
+                rule = Rule()
+                session.add(rule)
+
+        if (rule.preset_version or 0) >= preset.version:
+            continue
+        rule.preset_id = preset.preset_id
+        rule.preset_version = preset.version
+        rule.name = preset.name
+        rule.rule_type = preset.rule_type
+        rule.match_mode = preset.match_mode
+        rule.pattern = preset.pattern
+        rule.action = preset.action
+        changed = True
+
+    return changed
+
+
+def _is_legacy_preset(rule: Rule, preset: RulePreset) -> bool:
+    return rule.pattern == preset.pattern or rule.pattern in preset.legacy_patterns
 
 
 def _migrate_existing_tables(sync_connection) -> None:
@@ -68,6 +80,11 @@ def _migrate_existing_tables(sync_connection) -> None:
         "rules": {
             "match_mode": "VARCHAR(32) NOT NULL DEFAULT 'regex'",
             "name": "VARCHAR(120) NULL",
+            "preset_id": "VARCHAR(64) NULL",
+            "preset_version": "INTEGER NULL",
+        },
+        "audit_logs": {
+            "content_fingerprint": "VARCHAR(64) NULL",
         },
     }
     for table_name, columns in migrations.items():
@@ -77,8 +94,23 @@ def _migrate_existing_tables(sync_connection) -> None:
         for column_name, definition in columns.items():
             if column_name not in existing:
                 sync_connection.execute(
-                    text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+                    text(
+                        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
+                    )
                 )
+    current_inspector = inspect(sync_connection)
+    audit_columns = (
+        {column["name"] for column in current_inspector.get_columns("audit_logs")}
+        if "audit_logs" in current_inspector.get_table_names()
+        else set()
+    )
+    if {"user_id", "content_fingerprint", "created_at"} <= audit_columns:
+        sync_connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_log_user_fingerprint_time "
+                "ON audit_logs (user_id, content_fingerprint, created_at)"
+            )
+        )
 
 
 async def get_db():

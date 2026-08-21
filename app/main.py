@@ -1,20 +1,19 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 import uvicorn
 from aiogram.types import BotCommand
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from app.bot.loader import ai_client, bot, dp
+from app.bot.loader import bot, dp
 from app.core.config import settings
 from app.database.core import engine, init_db
 from app.services.protection import cleanup_old_audit_logs
 from app.web.routes import router as web_router
 
-# Import modules for router registration.
-import app.bot.business  # noqa: E402,F401
 import app.bot.handlers  # noqa: E402,F401
 
 logging.basicConfig(
@@ -22,14 +21,15 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
+APP_DIR = Path(__file__).resolve().parent
 
 
 async def setup_bot_commands() -> None:
     await bot.set_my_commands(
         [
-            BotCommand(command="start", description="Start interaction"),
-            BotCommand(command="ban", description="[Admin] Ban user"),
-            BotCommand(command="unban", description="[Admin] Unban user"),
+            BotCommand(command="start", description="开始或重新验证"),
+            BotCommand(command="ban", description="管理员：封禁用户"),
+            BotCommand(command="unban", description="管理员：解除封禁"),
         ]
     )
 
@@ -60,14 +60,46 @@ async def lifespan(_: FastAPI):
         polling_task.cancel()
         with suppress(asyncio.CancelledError):
             await polling_task
-        await ai_client.close()
         await bot.session.close()
         await engine.dispose()
         logger.info("RelayCat stopped")
 
 
-app = FastAPI(title="RelayCat Admin", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app = FastAPI(
+    title="RelayCat Admin",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = (
+        "public, max-age=31536000, immutable"
+        if request.url.path.startswith("/static/")
+        else "no-store"
+    )
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; base-uri 'none'; form-action 'self'; "
+        "frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; "
+        "style-src 'self'; script-src 'self'; font-src 'self'"
+    )
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=(), payment=()"
+    )
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return response
+
+
+app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 app.include_router(web_router)
 
 

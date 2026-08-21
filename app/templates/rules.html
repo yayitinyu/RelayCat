@@ -2,32 +2,25 @@
 
 {% block content %}
 <section class="page-heading compact">
-    <div>
-        <p class="eyebrow">Message protection</p>
-        <h1>过滤规则</h1>
-        <p>先用关键词和推荐防护完成大多数设置；只有确实需要复杂条件时再使用正则。</p>
-    </div>
+    <div><h1>过滤规则</h1><p>先启用预置规则，再按需添加关键词。</p></div>
 </section>
 
 {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
-{% if request.query_params.get('saved') %}<div class="notice notice-success" role="status">规则已保存并立即生效。</div>{% endif %}
+{% if request.query_params.get('saved') %}<div class="notice notice-success" role="status">规则已保存。</div>{% endif %}
 
 <section class="panel preset-panel" aria-labelledby="preset-title">
-    <div class="panel-heading">
-        <div><p class="section-kicker">Ready-made protection</p><h2 id="preset-title">一键加入推荐防护</h2></div>
-        <span class="quiet">重复规则不会再次添加</span>
-    </div>
+    <div class="panel-heading"><h2 id="preset-title">预置防护</h2></div>
     <div class="preset-grid">
         {% for preset_id, preset in rule_presets.items() %}
         <article class="preset-item">
             <div><strong>{{ preset.name }}</strong><p>{{ preset.description }}</p></div>
-            {% if preset.name in existing_presets %}
-            <span class="status status-ok">已加入</span>
+            {% if preset_id in existing_presets %}
+            <span class="status status-ok">已启用</span>
             {% else %}
             <form action="/rules/presets/add" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="preset_id" value="{{ preset_id }}">
-                <button class="button button-secondary button-small" type="submit">加入</button>
+                <button class="button button-secondary button-small" type="submit">启用</button>
             </form>
             {% endif %}
         </article>
@@ -37,12 +30,12 @@
 
 <div class="rule-builders">
     <section class="panel rule-builder" aria-labelledby="new-rule-title">
-        <div><p class="section-kicker">Simple rule</p><h2 id="new-rule-title">按文字添加规则</h2></div>
+        <h2 id="new-rule-title">关键词规则</h2>
         <form action="/rules/add" method="post" class="guided-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <label>规则名称<input type="text" name="name" maxlength="120" required value="自定义文字规则"></label>
+            <label>名称<input type="text" name="name" maxlength="120" required value="自定义关键词"></label>
             <div class="field-grid">
-                <label>检查哪里
+                <label>检查范围
                     <select name="rule_type">
                         <option value="message_content">消息正文</option>
                         <option value="username">用户名</option>
@@ -50,118 +43,90 @@
                         <option value="is_command">Bot 命令</option>
                     </select>
                 </label>
-                <label>怎样才算命中
+                <label>匹配方式
                     <select name="match_mode">
-                        <option value="contains_any">包含任一关键词</option>
-                        <option value="equals">与任一项完全相同</option>
+                        <option value="contains_any">包含任一项</option>
+                        <option value="equals">完全相同</option>
                         <option value="starts_with">以任一项开头</option>
                         <option value="ends_with">以任一项结尾</option>
                     </select>
                 </label>
             </div>
-            <label>要匹配的文字（每行一项）<textarea name="pattern" rows="5" maxlength="500" required>广告
+            <label>关键词（每行一项）<textarea name="pattern" rows="5" maxlength="500" required>广告
 推广</textarea></label>
             <fieldset class="choice-field">
-                <legend>命中后怎么处理</legend>
-                <label><input type="radio" name="action" value="block" checked><span><strong>拦截并告知</strong><small>用户会知道消息没有送达</small></span></label>
-                <label><input type="radio" name="action" value="drop"><span><strong>静默丢弃</strong><small>不向用户发送任何提示</small></span></label>
-                <label><input type="radio" name="action" value="allow"><span><strong>直接放行</strong><small>作为白名单，不再经过 AI 审查</small></span></label>
+                <legend>处理方式</legend>
+                <label><input type="radio" name="action" value="block" checked><span><strong>拦截</strong><small>告知用户未送达</small></span></label>
+                <label><input type="radio" name="action" value="drop"><span><strong>丢弃</strong><small>不发送提示</small></span></label>
+                <label><input type="radio" name="action" value="allow"><span><strong>放行</strong><small>白名单优先匹配</small></span></label>
             </fieldset>
-            <button type="submit" class="button button-primary">添加文字规则</button>
+            <button type="submit" class="button button-primary">添加规则</button>
         </form>
     </section>
 
     <section class="panel rule-builder" aria-labelledby="type-rule-title">
-        <div><p class="section-kicker">Message type</p><h2 id="type-rule-title">按消息类型处理</h2></div>
+        <h2 id="type-rule-title">消息类型</h2>
         <form action="/rules/add" method="post" class="guided-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="name" value="自定义消息类型规则">
+            <input type="hidden" name="name" value="自定义消息类型">
             <input type="hidden" name="rule_type" value="message_type">
             <input type="hidden" name="match_mode" value="equals">
-            <label>收到哪种消息
-                <select name="pattern">
-                    {% for value, label in message_type_labels.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-                </select>
-            </label>
-            <label>怎样处理
-                <select name="action">
-                    <option value="block">拦截并告知</option>
-                    <option value="drop">静默丢弃</option>
-                    <option value="allow">直接放行</option>
-                </select>
-            </label>
-            <button type="submit" class="button button-secondary">添加类型规则</button>
+            <label>类型<select name="pattern">{% for value, label in message_type_labels.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+            <label>处理<select name="action"><option value="block">拦截</option><option value="drop">丢弃</option><option value="allow">放行</option></select></label>
+            <button type="submit" class="button button-secondary">添加规则</button>
         </form>
-
         <details class="advanced-panel">
-            <summary>高级：使用自定义正则</summary>
+            <summary>高级正则</summary>
             <form action="/rules/add" method="post" class="guided-form advanced-form">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="match_mode" value="regex">
-                <label>规则名称<input type="text" name="name" maxlength="120" required value="高级正则规则"></label>
-                <label>检查字段
-                    <select name="rule_type">
-                        <option value="message_content">消息正文</option>
-                        <option value="username">用户名</option>
-                        <option value="sender_name">显示名称</option>
-                        <option value="is_command">Bot 命令</option>
-                    </select>
-                </label>
-                <label>正则表达式<input class="code-input" type="text" name="pattern" maxlength="500" required value="(?:广告|推广)"></label>
-                <label>命中后
-                    <select name="action"><option value="block">拦截并告知</option><option value="drop">静默丢弃</option><option value="allow">直接放行</option></select>
-                </label>
-                <button type="submit" class="button button-secondary">添加高级规则</button>
+                <label>名称<input type="text" name="name" maxlength="120" required value="自定义正则"></label>
+                <label>检查范围<select name="rule_type"><option value="message_content">消息正文</option><option value="username">用户名</option><option value="sender_name">显示名称</option><option value="is_command">Bot 命令</option></select></label>
+                <label>正则表达式<textarea class="code-input" name="pattern" rows="4" maxlength="500" required></textarea></label>
+                <label>处理<select name="action"><option value="block">拦截</option><option value="drop">丢弃</option><option value="allow">放行</option></select></label>
+                <button type="submit" class="button button-secondary">添加正则</button>
             </form>
         </details>
     </section>
 </div>
 
-<section class="panel data-panel" aria-labelledby="rule-list-title">
-    <div class="panel-heading"><div><p class="section-kicker">Active rule set</p><h2 id="rule-list-title">现有规则</h2></div><span class="quiet">{{ rules|length }} 条，白名单优先</span></div>
+<section class="panel rule-list-panel" aria-labelledby="rule-list-title">
+    <div class="panel-heading"><h2 id="rule-list-title">现有规则</h2><span class="quiet">{{ rules|length }} 条</span></div>
     {% if rules %}
     <div class="rule-list">
         {% for rule in rules %}
         <article class="rule-item {% if not rule.is_active %}is-muted{% endif %}">
             <div class="rule-summary">
-                <span class="status {% if rule.is_active %}status-ok{% endif %}">{% if rule.is_active %}运行中{% else %}已停用{% endif %}</span>
+                <span class="status {% if rule.is_active %}status-ok{% endif %}">{{ '启用' if rule.is_active else '停用' }}</span>
                 <div>
-                    <strong>{{ rule.name or rule_type_labels.get(rule.rule_type, rule.rule_type) }}</strong>
+                    <strong>{{ rule.name or rule_type_labels.get(rule.rule_type, rule.rule_type) }}{% if rule.preset_id %} <span class="managed-mark">预置</span>{% endif %}</strong>
                     <small>{{ rule_type_labels.get(rule.rule_type, rule.rule_type) }} · {{ match_mode_labels.get(rule.match_mode, rule.match_mode) }}</small>
                     <code>{{ rule.pattern }}</code>
                 </div>
                 <span class="rule-action">{{ action_labels.get(rule.action, rule.action) }}</span>
             </div>
             <div class="rule-controls">
-                <form action="/rules/toggle" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="rule_id" value="{{ rule.id }}"><button class="table-action" type="submit">{% if rule.is_active %}停用{% else %}启用{% endif %}</button></form>
+                <form action="/rules/toggle" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="rule_id" value="{{ rule.id }}"><button class="table-action" type="submit">{{ '停用' if rule.is_active else '启用' }}</button></form>
                 <details class="rule-editor">
                     <summary>编辑</summary>
-                    <div class="rule-edit-panel">
-                        <div class="rule-edit-heading"><strong>编辑规则内容</strong><span>修改后保存，规则会立即生效。</span></div>
-                        <form action="/rules/update" method="post" class="inline-edit">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <input type="hidden" name="rule_id" value="{{ rule.id }}">
-                            <label>名称<input type="text" name="name" value="{{ rule.name or '' }}" maxlength="120"></label>
-                            <label>字段<select name="rule_type">{% for value, label in rule_type_labels.items() %}<option value="{{ value }}" {% if rule.rule_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-                            <label>匹配<select name="match_mode">{% for value, label in match_mode_labels.items() %}<option value="{{ value }}" {% if rule.match_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-                            {% if rule.match_mode == 'regex' %}
-                            <label>正则表达式<input class="code-input" type="text" name="pattern" value="{{ rule.pattern }}" maxlength="500" required></label>
-                            {% else %}
-                            <label class="keyword-edit-field">内容（每行一项）
-                                <textarea class="keyword-edit-input" name="pattern" rows="5" maxlength="500" required>{{ rule.pattern }}</textarea>
-                                <small class="field-help">换行、逗号或分号都可以分隔多项。</small>
-                            </label>
-                            {% endif %}
+                    <form action="/rules/update" method="post" class="rule-edit-panel">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                        <div class="field-grid">
+                            <label>名称<input type="text" name="name" maxlength="120" value="{{ rule.name or '' }}"></label>
+                            <label>检查范围<select name="rule_type">{% for value, label in rule_type_labels.items() %}<option value="{{ value }}" {% if rule.rule_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                            <label>匹配方式<select name="match_mode">{% for value, label in match_mode_labels.items() %}<option value="{{ value }}" {% if rule.match_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
                             <label>处理<select name="action">{% for value, label in action_labels.items() %}<option value="{{ value }}" {% if rule.action == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-                            <button class="button button-primary" type="submit">保存修改</button>
-                        </form>
-                    </div>
+                        </div>
+                        <label>规则内容<textarea class="code-input keyword-edit-input" name="pattern" rows="6" maxlength="500" required>{{ rule.pattern }}</textarea></label>
+                        <button class="button button-primary button-small" type="submit">保存</button>
+                    </form>
                 </details>
-                <form action="/rules/delete" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="rule_id" value="{{ rule.id }}"><button class="table-action danger" type="submit">删除</button></form>
+                <form action="/rules/delete" method="post" data-confirm="删除后无法恢复，确定继续？"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="rule_id" value="{{ rule.id }}"><button class="table-action danger" type="submit">删除</button></form>
             </div>
         </article>
         {% endfor %}
     </div>
-    {% else %}<div class="empty-state"><strong>暂时没有规则</strong><p>可先从推荐防护中加入一组。</p></div>{% endif %}
+    {% else %}<div class="empty-state">暂无规则</div>{% endif %}
 </section>
 {% endblock %}

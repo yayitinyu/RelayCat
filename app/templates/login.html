@@ -1,24 +1,16 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="login-layout" aria-labelledby="login-title">
-    <div class="login-brand">
-        <img src="/static/images/relaycat-logo.png" width="180" height="180" alt="RelayCat 猫与消息轨迹标志">
-        <p class="eyebrow">RelayCat console</p>
-        <h1 id="login-title">消息来往，<br>交给一只靠谱的猫。</h1>
-        <p>管理消息中继、过滤规则与 Telegram Business AI 自动回复。</p>
+<section class="login-panel" aria-labelledby="login-title">
+    <div class="login-mark">
+        <img src="/static/images/relaycat-logo.png" width="72" height="72" alt="">
+        <h1 id="login-title">RelayCat</h1>
     </div>
-    <div class="panel login-panel">
-        <p class="section-kicker">管理员登录</p>
-        <h2>欢迎回来</h2>
-        {% if error %}
-        <div class="notice notice-error" role="alert">{{ error }}</div>
-        {% endif %}
-        <form method="post" action="/login" class="stack-form">
-            <label for="password">管理员密码</label>
-            <input id="password" type="password" name="password" autocomplete="current-password" required autofocus placeholder="输入密码">
-            <button type="submit" class="button button-primary">进入控制台</button>
-        </form>
-    </div>
+    {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="/login" class="stack-form">
+        <label for="password">管理员密码</label>
+        <input id="password" type="password" name="password" autocomplete="current-password" required autofocus>
+        <button type="submit" class="button button-primary button-block">登录</button>
+    </form>
 </section>
 {% endblock %}

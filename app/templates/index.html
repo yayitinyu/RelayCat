@@ -3,48 +3,28 @@
 {% block content %}
 <section class="page-heading">
     <div>
-        <p class="eyebrow">Overview</p>
-        <h1>今天也在认真收消息。</h1>
-        <p>中继状态、Business 连接和最近访客都在这里。</p>
+        <h1>概览</h1>
+        <p>中继状态与最近用户。</p>
     </div>
-    <a class="button button-secondary" href="/settings">配置自动回复</a>
+    <a class="button button-secondary" href="/rules">管理规则</a>
 </section>
 
 <section class="stats-grid" aria-label="服务统计">
-    <article class="stat-card stat-primary">
-        <span>累计用户</span>
-        <strong>{{ user_count }}</strong>
-        <small>已与 Bot 建立会话</small>
-    </article>
-    <article class="stat-card">
-        <span>中继记录</span>
-        <strong>{{ msg_count }}</strong>
-        <small>管理员侧消息路由</small>
-    </article>
-    <article class="stat-card">
-        <span>Business 连接</span>
-        <strong>{{ business_count }}</strong>
-        <small>当前启用的账号自动化</small>
-    </article>
-    <article class="stat-card stat-alert">
-        <span>今日已拦截</span>
-        <strong>{{ blocked_today }}</strong>
-        <small>规则、AI 与频率拦截</small>
-    </article>
+    <article class="stat-card stat-primary"><span>用户</span><strong>{{ user_count }}</strong></article>
+    <article class="stat-card"><span>已验证</span><strong>{{ verified_count }}</strong></article>
+    <article class="stat-card"><span>中继</span><strong>{{ message_count }}</strong></article>
+    <article class="stat-card stat-alert"><span>今日拦截</span><strong>{{ blocked_today }}</strong></article>
 </section>
 
 <section class="panel data-panel" aria-labelledby="recent-users-title">
     <div class="panel-heading">
-        <div>
-            <p class="section-kicker">Recent contacts</p>
-            <h2 id="recent-users-title">最近用户</h2>
-        </div>
-        <span class="quiet">最多显示 10 位</span>
+        <h2 id="recent-users-title">最近用户</h2>
+        <span class="quiet">最多 10 位</span>
     </div>
     {% if users %}
     <div class="table-wrap">
         <table>
-            <thead><tr><th>用户</th><th>Telegram ID</th><th>验证</th><th class="align-right">操作</th></tr></thead>
+            <thead><tr><th>用户</th><th>Telegram ID</th><th>状态</th><th class="align-right">操作</th></tr></thead>
             <tbody>
             {% for user in users %}
                 <tr>
@@ -57,9 +37,9 @@
                     </td>
                     <td class="align-right">
                         {% if user.is_banned %}
-                        <form method="post" action="/users/unban"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action" type="submit">解除封禁</button></form>
+                        <form method="post" action="/users/unban"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action" type="submit">解封</button></form>
                         {% else %}
-                        <form method="post" action="/users/ban"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action danger" type="submit">封禁</button></form>
+                        <form method="post" action="/users/ban" data-confirm="确定封禁这位用户？"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="user_id" value="{{ user.id }}"><button class="table-action danger" type="submit">封禁</button></form>
                         {% endif %}
                     </td>
                 </tr>
@@ -68,7 +48,7 @@
         </table>
     </div>
     {% else %}
-    <div class="empty-state"><strong>还没有访客</strong><p>用户完成首次验证后会出现在这里。</p></div>
+    <div class="empty-state">暂无用户</div>
     {% endif %}
 </section>
 {% endblock %}

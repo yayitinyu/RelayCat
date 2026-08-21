@@ -2,116 +2,64 @@
 
 {% block content %}
 <section class="page-heading compact">
-    <div><p class="eyebrow">Safety & automation</p><h1>安全与 AI</h1><p>从发送频率、重复违规到 AI 审查，按需要逐层打开。</p></div>
+    <div><h1>防护设置</h1><p>限制突发、重复发送与持续违规。</p></div>
 </section>
 
-{% if request.query_params.get('saved') %}<div class="notice notice-success" role="status">设置已保存并立即生效。</div>{% endif %}
-{% if request.query_params.get('models_fetched') %}<div class="notice notice-success" role="status">已获取并保存 {{ request.query_params.get('models_fetched') }} 个渠道模型。</div>{% endif %}
+{% if request.query_params.get('saved') %}<div class="notice notice-success" role="status">设置已保存。</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="notice notice-error" role="alert">{{ request.query_params.get('error') }}</div>{% endif %}
 
 <form action="/settings/update" method="post" class="settings-stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <section class="panel settings-section" aria-labelledby="guard-title">
+    <section class="panel settings-section" aria-labelledby="verification-title">
+        <div class="panel-heading"><h2 id="verification-title">人机验证</h2><span class="status status-ok">已启用</span></div>
+        <div class="policy-grid">
+            <div><strong>3 步</strong><span>随机顺序</span></div>
+            <div><strong>{{ verification_ttl_minutes }} 分钟</strong><span>有效期</span></div>
+            <div><strong>{{ verification_attempts }} 次</strong><span>尝试上限</span></div>
+            <div><strong>{{ verification_lock_minutes }} 分钟</strong><span>失败锁定</span></div>
+        </div>
+    </section>
+
+    <section class="panel settings-section" aria-labelledby="rate-title">
         <div class="panel-heading">
-            <div><p class="section-kicker">Traffic guard</p><h2 id="guard-title">发送频率</h2></div>
+            <h2 id="rate-title">消息限流</h2>
             <label class="switch"><input type="checkbox" name="rate_limit_enabled" value="true" {% if rate_limit_enabled %}checked{% endif %}><span aria-hidden="true"></span><b>启用</b></label>
         </div>
-        <div class="sentence-setting">
-            <span>同一用户每分钟最多发送</span>
-            <label><span class="sr-only">每分钟最大发送数</span><input type="number" name="messages_per_minute" min="1" max="300" value="{{ messages_per_minute }}" required></label>
-            <span>条消息，超过的消息直接拦截。</span>
+        <div class="field-grid field-grid-three">
+            <label>每分钟上限<input type="number" name="messages_per_minute" min="1" max="300" value="{{ messages_per_minute }}" required></label>
+            <label>突发消息数<input type="number" name="burst_messages" min="2" max="50" value="{{ burst_messages }}" required></label>
+            <label>突发窗口（秒）<input type="number" name="burst_window_seconds" min="2" max="60" value="{{ burst_window_seconds }}" required></label>
+            <label>重复消息数<input type="number" name="repeat_limit" min="2" max="20" value="{{ repeat_limit }}" required></label>
+            <label>重复窗口（分钟）<input type="number" name="repeat_window_minutes" min="1" max="1440" value="{{ repeat_window_minutes }}" required></label>
         </div>
     </section>
 
     <section class="panel settings-section" aria-labelledby="ban-title">
         <div class="panel-heading">
-            <div><p class="section-kicker">Repeat offender</p><h2 id="ban-title">多次触发后自动封禁</h2></div>
+            <h2 id="ban-title">自动封禁</h2>
             <label class="switch"><input type="checkbox" name="auto_ban_enabled" value="true" {% if auto_ban_enabled %}checked{% endif %}><span aria-hidden="true"></span><b>启用</b></label>
         </div>
-        <div class="sentence-setting sentence-long">
-            <span>当同一用户在</span>
-            <label><span>统计时段（分钟）</span><input type="number" name="auto_ban_window_minutes" min="1" max="1440" value="{{ auto_ban_window_minutes }}" required></label>
-            <span>分钟内被拦截</span>
-            <label><span>触发次数</span><input type="number" name="auto_ban_threshold" min="2" max="100" value="{{ auto_ban_threshold }}" required></label>
-            <span>次，就封禁</span>
-            <label><span>封禁时长（小时，0 为永久）</span><input type="number" name="auto_ban_duration_hours" min="0" max="8760" value="{{ auto_ban_duration_hours }}" required></label>
-            <span>小时。</span>
+        <div class="field-grid field-grid-three">
+            <label>统计窗口（分钟）<input type="number" name="auto_ban_window_minutes" min="1" max="1440" value="{{ auto_ban_window_minutes }}" required></label>
+            <label>拦截次数<input type="number" name="auto_ban_threshold" min="2" max="100" value="{{ auto_ban_threshold }}" required></label>
+            <label>封禁时长（小时）<input type="number" name="auto_ban_duration_hours" min="0" max="8760" value="{{ auto_ban_duration_hours }}" required><span class="field-help">0 表示永久</span></label>
         </div>
-        <p class="section-note">规则拦截、AI 拦截和频率超限都会计入次数；临时封禁到期后会自动解除。</p>
     </section>
 
-    <section class="panel settings-section" aria-labelledby="provider-title">
-        <div class="panel-heading">
-            <div><p class="section-kicker">OpenAI-compatible provider</p><h2 id="provider-title">AI 接口</h2></div>
-            <span class="status {% if ai_configured %}status-ok{% else %}status-danger{% endif %}">{% if ai_configured %}已配置{% else %}缺少密钥{% endif %}</span>
-        </div>
-        <div class="field-grid provider-grid">
-            <label>Base URL<input type="url" name="ai_base_url" maxlength="500" required value="{{ ai_base_url }}"></label>
-            <label>API Key
-                <input class="code-input api-key-input" type="password" name="ai_api_key" maxlength="512" autocomplete="new-password" placeholder="{% if ai_has_key %}****************{% else %}输入 API Key{% endif %}" aria-describedby="key-state">
-            </label>
-        </div>
-        <div id="key-state" class="key-state provider-key-state">
-            <span>{% if ai_has_key %}星号表示密钥已配置。{% endif %}真实密钥不会回显；输入新值才会替换，并使用 <code>RELAYCAT_SECRET_KEY</code> 加密。</span>
-            <span>当前来源：{% if ai_key_source == 'admin' %}管理后台加密配置{% elif ai_key_source == 'environment' %}环境变量{% else %}尚未配置{% endif %}</span>
-        </div>
-        {% if ai_has_managed_key %}<label class="check-row"><input type="checkbox" name="clear_ai_api_key" value="true"><span>删除后台保存的密钥{% if ai_key_source == 'admin' %}，之后会回退到环境变量{% endif %}</span></label>{% endif %}
-        <div class="model-picker">
-            <label>当前使用模型
-                <select class="code-input" name="ai_model" required>
-                    {% for model in saved_ai_models %}<option value="{{ model }}" {% if model == ai_model %}selected{% endif %}>{{ model }}</option>{% endfor %}
-                </select>
-            </label>
-            <div class="model-fetch-action">
-                <span>已保存 {{ saved_ai_models|length }} 个模型</span>
-                <button class="button button-secondary button-small" type="submit" formaction="/settings/ai/models/fetch" formmethod="post" formnovalidate>获取并保存渠道模型</button>
-            </div>
-        </div>
-        <details class="advanced-panel model-manual-panel">
-            <summary>手动添加渠道未列出的模型</summary>
-            <label>自定义模型名称<input class="code-input" type="text" name="ai_model_custom" maxlength="200" placeholder="例如：gpt-4.1-mini"></label>
-        </details>
-        {% if not secret_key_ready %}<div class="notice notice-warning">当前仍使用默认 <code>RELAYCAT_SECRET_KEY</code>。为防止密钥可被解密，后台暂不接受新的 API Key；请先设置随机长字符串并重启。</div>{% endif %}
-    </section>
-
-    <section class="panel settings-section" aria-labelledby="review-title">
-        <div class="panel-heading">
-            <div><p class="section-kicker">AI moderation</p><h2 id="review-title">AI 辅助审查</h2></div>
-            <label class="switch"><input type="checkbox" name="moderation_ai_enabled" value="true" {% if moderation_ai_enabled %}checked{% endif %}><span aria-hidden="true"></span><b>启用</b></label>
-        </div>
-        <p class="section-note">只审查未命中白名单的文字和图片说明；服务异常时记录错误并放行，避免误伤正常消息。</p>
-        <label>达到多少置信度才拦截
-            <div class="range-field"><input type="range" name="moderation_ai_threshold" min="50" max="100" step="5" value="{{ moderation_ai_threshold }}" oninput="this.nextElementSibling.value = this.value + '%'" aria-label="AI 拦截置信度"><output>{{ moderation_ai_threshold }}%</output></div>
-        </label>
-        <details class="advanced-panel">
-            <summary>高级：修改 AI 审查标准</summary>
-            <label>审查标准<textarea name="moderation_ai_policy" rows="6" maxlength="2000" required>{{ moderation_ai_policy }}</textarea></label>
-        </details>
-    </section>
-
-    <section class="panel settings-section" aria-labelledby="business-title">
-        <div class="panel-heading">
-            <div><p class="section-kicker">Secretary bot</p><h2 id="business-title">Business AI 助理</h2></div>
-            <label class="switch"><input type="checkbox" name="business_ai_enabled" value="true" {% if business_ai_enabled %}checked{% endif %}><span aria-hidden="true"></span><b>启用</b></label>
-        </div>
-        <p class="section-note">仅代表已连接的 Telegram Business 账号回复私聊；账号本人发出的消息不会触发。</p>
-        <label>助理职责与语气<textarea name="business_ai_prompt" rows="8" maxlength="4000" required>{{ business_ai_prompt }}</textarea></label>
-    </section>
-
-    <section class="panel compact-panel">
+    <section class="panel compact-panel" aria-label="其他设置">
         <div class="utility-settings">
             <label class="setting-row">
-                <span><strong>管理员回复回执</strong><small>回复成功后为原消息添加 👍</small></span>
+                <span><strong>回复回执</strong></span>
                 <span class="switch"><input type="checkbox" name="confirm_reply" value="true" {% if confirm_reply %}checked{% endif %}><span aria-hidden="true"></span></span>
             </label>
             <label class="setting-row retention-row">
-                <span><strong>安全日志保留天数</strong><small>服务启动时自动清理更早的日志</small></span>
+                <span><strong>日志保留天数</strong></span>
                 <input type="number" name="log_retention_days" min="1" max="365" value="{{ log_retention_days }}" required>
             </label>
         </div>
     </section>
 
-    <div class="sticky-save"><button type="submit" class="button button-primary">保存全部设置</button></div>
+    <div class="sticky-save"><button type="submit" class="button button-primary">保存设置</button></div>
 </form>
 {% endblock %}

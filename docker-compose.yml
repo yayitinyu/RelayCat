@@ -4,6 +4,7 @@ services:
     build:
       context: .
     restart: unless-stopped
+    init: true
     ports:
       - "${RELAYCAT_PORT:-8765}:${RELAYCAT_PORT:-8765}"
     volumes:
@@ -15,6 +16,13 @@ services:
       RELAYCAT_PORT: ${RELAYCAT_PORT:-8765}
       RELAYCAT_DATA_DIR: /data
       RELAYCAT_DB_URL: sqlite+aiosqlite:////data/relaycat.db
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('RELAYCAT_PORT','8765') + '/healthz', timeout=3)"]
       interval: 30s
