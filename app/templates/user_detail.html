@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-heading compact">
+    <div><h1>{{ user.first_name or '未命名用户' }}</h1><p><code>{{ user.id }}</code>{% if user.username %} · @{{ user.username }}{% endif %}</p></div>
+    <a class="button button-secondary" href="/users">返回用户列表</a>
+</section>
+
+{% if request.query_params.get('saved') %}<div class="notice notice-success" role="status">操作已完成。</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="notice notice-error" role="alert">{{ request.query_params.get('error') }}</div>{% endif %}
+
+<section class="stats-grid user-stats" aria-label="用户状态">
+    <article class="stat-card"><span>验证</span><strong class="stat-text">{{ '已通过' if user.is_verified else '待验证' }}</strong></article>
+    <article class="stat-card {% if user.is_banned %}stat-alert{% endif %}"><span>访问</span><strong class="stat-text">{{ '已封禁' if user.is_banned else '正常' }}</strong></article>
+    <article class="stat-card"><span>中继记录</span><strong>{{ message_count }}</strong></article>
+    <article class="stat-card"><span>创建时间</span><strong class="stat-date">{{ user.created_at.strftime('%Y-%m-%d') }}</strong></article>
+</section>
+
+{% if not is_admin %}
+<div class="management-grid">
+    <section class="panel" aria-labelledby="access-title">
+        <div class="panel-heading"><h2 id="access-title">访问状态</h2></div>
+        {% if user.is_banned %}
+        <p class="detail-copy">{{ user.ban_reason or '管理员手动封禁' }}{% if user.banned_until %} · 至 {{ user.banned_until.strftime('%Y-%m-%d %H:%M') }}{% endif %}</p>
+        <form method="post" action="/users/{{ user.id }}/unban">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="button button-secondary" type="submit">解除封禁</button>
+        </form>
+        {% else %}
+        <form method="post" action="/users/{{ user.id }}/ban" class="stack-form" data-confirm="确定封禁这位用户？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label>原因<input type="text" name="reason" maxlength="255" value="管理员手动封禁"></label>
+            <label>时长（小时）<input type="number" name="duration_hours" min="0" max="8760" value="0"><span class="field-help">0 表示永久</span></label>
+            <button class="button button-secondary" type="submit">封禁用户</button>
+        </form>
+        {% endif %}
+    </section>
+
+    <section class="panel" aria-labelledby="verification-title">
+        <div class="panel-heading"><h2 id="verification-title">验证状态</h2></div>
+        {% if user.is_verified %}
+        <form method="post" action="/users/{{ user.id }}/revoke-verification" data-confirm="撤销后，用户需要重新完成人机验证。">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="button button-secondary" type="submit">撤销验证</button>
+        </form>
+        {% else %}
+        <form method="post" action="/users/{{ user.id }}/verify">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="button button-secondary" type="submit">手动通过</button>
+        </form>
+        {% endif %}
+    </section>
+{% endif %}
+</div>
+
+<section class="panel data-panel" aria-labelledby="activity-title">
+    <div class="panel-heading"><h2 id="activity-title">最近活动</h2><span class="quiet">最多 30 条</span></div>
+    {% if events %}
+        {% for entry in events %}
+        <article class="log-entry">
+            <time datetime="{{ entry.created_at.isoformat() }}">{{ entry.created_at.strftime('%m-%d %H:%M') }}</time>
+            <span class="log-dot log-{{ entry.outcome }}" aria-hidden="true"></span>
+            <div><div class="log-title"><strong>{{ event_labels.get(entry.event_type, entry.event_type) }}</strong><span class="status">{{ outcome_labels.get(entry.outcome, entry.outcome) }}</span></div>{% if entry.reason %}<p>{{ entry.reason }}</p>{% endif %}</div>
+        </article>
+        {% endfor %}
+    {% else %}<div class="empty-state">暂无活动</div>{% endif %}
+</section>
+
+{% if not is_admin %}
+<section class="panel danger-zone" aria-labelledby="delete-title">
+    <div><h2 id="delete-title">删除用户资料</h2><p>消息映射与验证状态会被删除，安全审计日志将保留。</p></div>
+    <form method="post" action="/users/{{ user.id }}/delete" data-confirm="此操作会删除用户资料、消息映射与验证状态，确定继续？">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="button button-danger" type="submit">删除</button>
+    </form>
+</section>
+{% endif %}
+{% endblock %}

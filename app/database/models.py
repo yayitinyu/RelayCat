@@ -99,6 +99,7 @@ class VerificationChallenge(Base):
     __tablename__ = "verification_challenges"
 
     user_id = Column(BigInteger, primary_key=True)
+    kind = Column(String(16), default="choice", nullable=False)
     challenge_id = Column(String(32), nullable=False, unique=True, index=True)
     chat_id = Column(BigInteger, nullable=False)
     message_id = Column(BigInteger, nullable=True)

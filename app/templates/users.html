@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-heading compact">
+    <div><h1>用户</h1><p>共 {{ total }} 位</p></div>
+</section>
+
+{% if request.query_params.get('saved') %}<div class="notice notice-success" role="status">操作已完成。</div>{% endif %}
+
+<section class="panel user-toolbar" aria-label="筛选用户">
+    <form method="get" action="/users" class="filter-form">
+        <label>搜索<input type="search" name="q" value="{{ q }}" placeholder="ID、用户名或姓名"></label>
+        <label>状态<select name="status">
+            <option value="all" {% if user_status == 'all' %}selected{% endif %}>全部</option>
+            <option value="verified" {% if user_status == 'verified' %}selected{% endif %}>已验证</option>
+            <option value="pending" {% if user_status == 'pending' %}selected{% endif %}>待验证</option>
+            <option value="banned" {% if user_status == 'banned' %}selected{% endif %}>已封禁</option>
+        </select></label>
+        <button class="button button-primary" type="submit">筛选</button>
+        {% if q or user_status != 'all' %}<a class="button button-secondary" href="/users">清除</a>{% endif %}
+    </form>
+</section>
+
+<section class="panel data-panel" aria-labelledby="users-title">
+    <div class="panel-heading"><h2 id="users-title">全部用户</h2><span class="quiet">第 {{ page }} / {{ pages }} 页</span></div>
+    {% if users %}
+    <div class="table-wrap">
+        <table class="users-table">
+            <thead><tr><th>用户</th><th>Telegram ID</th><th>最近更新</th><th>状态</th><th class="align-right">操作</th></tr></thead>
+            <tbody>
+            {% for user in users %}
+                <tr>
+                    <td><strong>{{ user.first_name or '未命名用户' }}{% if user.id == admin_id %} · 管理员{% endif %}</strong><small>@{{ user.username or '无用户名' }}</small></td>
+                    <td><code>{{ user.id }}</code></td>
+                    <td><time datetime="{{ user.updated_at.isoformat() }}">{{ user.updated_at.strftime('%Y-%m-%d %H:%M') }}</time></td>
+                    <td>
+                        {% if user.is_banned %}<span class="status status-danger">已封禁</span>
+                        {% elif user.is_verified %}<span class="status status-ok">已验证</span>
+                        {% else %}<span class="status">待验证</span>{% endif %}
+                    </td>
+                    <td class="align-right"><a class="table-action" href="/users/{{ user.id }}">查看</a></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<div class="empty-state">没有匹配的用户</div>{% endif %}
+
+    {% if pages > 1 %}
+    <nav class="pager" aria-label="用户分页">
+        {% if page > 1 %}<a class="button button-small button-secondary" href="?q={{ q|urlencode }}&status={{ user_status }}&page={{ page - 1 }}">上一页</a>{% endif %}
+        <span class="quiet">{{ page }} / {{ pages }}</span>
+        {% if page < pages %}<a class="button button-small button-secondary" href="?q={{ q|urlencode }}&status={{ user_status }}&page={{ page + 1 }}">下一页</a>{% endif %}
+    </nav>
+    {% endif %}
+</section>
+{% endblock %}

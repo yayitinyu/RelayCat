@@ -215,6 +215,12 @@ class DatabaseMigrationTests(unittest.IsolatedAsyncioTestCase):
                         "user_id BIGINT, created_at TIMESTAMP)"
                     )
                 )
+                await connection.execute(
+                    text(
+                        "CREATE TABLE verification_challenges ("
+                        "user_id BIGINT PRIMARY KEY, challenge_id VARCHAR(32))"
+                    )
+                )
                 await connection.run_sync(_migrate_existing_tables)
 
                 def schema(sync_connection):
@@ -224,7 +230,12 @@ class DatabaseMigrationTests(unittest.IsolatedAsyncioTestCase):
                             table: {
                                 item["name"] for item in inspector.get_columns(table)
                             }
-                            for table in ("users", "rules", "audit_logs")
+                            for table in (
+                                "users",
+                                "rules",
+                                "audit_logs",
+                                "verification_challenges",
+                            )
                         },
                         {item["name"] for item in inspector.get_indexes("audit_logs")},
                     )
@@ -238,6 +249,7 @@ class DatabaseMigrationTests(unittest.IsolatedAsyncioTestCase):
             {"match_mode", "name", "preset_id", "preset_version"} <= migrated["rules"]
         )
         self.assertIn("content_fingerprint", migrated["audit_logs"])
+        self.assertIn("kind", migrated["verification_challenges"])
         self.assertIn("ix_audit_log_user_fingerprint_time", indexes)
 
 

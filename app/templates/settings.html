@@ -12,9 +12,13 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
     <section class="panel settings-section" aria-labelledby="verification-title">
-        <div class="panel-heading"><h2 id="verification-title">人机验证</h2><span class="status status-ok">已启用</span></div>
+        <div class="panel-heading"><h2 id="verification-title">人机验证</h2><span class="status {% if verification_method == 'turnstile' %}status-ok{% endif %}">{{ 'Turnstile' if verification_method == 'turnstile' else '顺序验证' }}</span></div>
+        <label class="verification-method">验证方式<select name="verification_method">
+            <option value="choice" {% if verification_method == 'choice' %}selected{% endif %}>Emoji 顺序验证</option>
+            <option value="turnstile" {% if verification_method == 'turnstile' %}selected{% endif %} {% if not turnstile_configured %}disabled{% endif %}>Cloudflare Turnstile{% if not turnstile_configured %}（未配置）{% endif %}</option>
+        </select></label>
         <div class="policy-grid">
-            <div><strong>3 步</strong><span>随机顺序</span></div>
+            <div><strong>{{ 'Cloudflare' if verification_method == 'turnstile' else '3 步' }}</strong><span>{{ '浏览器挑战' if verification_method == 'turnstile' else '随机顺序' }}</span></div>
             <div><strong>{{ verification_ttl_minutes }} 分钟</strong><span>有效期</span></div>
             <div><strong>{{ verification_attempts }} 次</strong><span>尝试上限</span></div>
             <div><strong>{{ verification_lock_minutes }} 分钟</strong><span>失败锁定</span></div>

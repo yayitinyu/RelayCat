@@ -24,12 +24,14 @@ from app.services.protection import (
     record_message_and_check_rate_limit,
     release_expired_ban,
 )
-from app.services.runtime_settings import get_bool_setting
+from app.services.runtime_settings import get_bool_setting, get_choice_setting
 from app.services.verification import (
+    CHOICE_KIND,
     bind_challenge_message,
     issue_challenge,
     verify_choice,
 )
+from app.services.turnstile import TURNSTILE_KIND
 
 router = Router(name="relay")
 dp.include_router(router)
@@ -56,6 +58,7 @@ async def get_or_create_user(tg_user: TgUser) -> User:
             user.username = tg_user.username
             user.first_name = tg_user.first_name
             user.last_name = tg_user.last_name
+        user.updated_at = utc_now()
         await session.commit()
         await session.refresh(user)
         return user
@@ -75,7 +78,22 @@ async def cmd_start(message: Message) -> None:
         await message.answer("验证已完成，直接发送消息即可。")
         return
 
-    result = await issue_challenge(user.id, message.chat.id)
+    verification_kind = await get_choice_setting(
+        "verification_method",
+        CHOICE_KIND,
+        choices={CHOICE_KIND, TURNSTILE_KIND},
+    )
+    if verification_kind == TURNSTILE_KIND and not settings.turnstile_configured:
+        logger.warning(
+            "Turnstile is selected but not configured; using choice challenge"
+        )
+        verification_kind = CHOICE_KIND
+    result = await issue_challenge(
+        user.id,
+        message.chat.id,
+        kind=verification_kind,
+        public_url=settings.turnstile_public_url,
+    )
     if result.status == "locked" and result.locked_until:
         await message.answer(_lockout_message(result.locked_until))
         return
