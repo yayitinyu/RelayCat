@@ -21,10 +21,13 @@ from app.database.models import (  # noqa: E402
     VerificationChallenge,
 )
 from app.services.verification import (  # noqa: E402
+    apply_turnstile_attempt,
     bind_challenge_message,
+    get_turnstile_challenge,
     issue_challenge,
     verify_choice,
 )
+from app.services.turnstile import TURNSTILE_KIND, is_challenge_token  # noqa: E402
 
 
 class VerificationTests(unittest.IsolatedAsyncioTestCase):
@@ -156,6 +159,75 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(events.count("verification_failed"), 3)
         self.assertIn("verification_locked", events)
+
+    async def test_turnstile_challenge_is_bound_and_consumed_once(self) -> None:
+        with patch("app.services.verification.AsyncSessionLocal", self.sessions):
+            issued = await issue_challenge(
+                42,
+                42,
+                kind=TURNSTILE_KIND,
+                public_url="https://relaycat.example.com",
+                now=self.now,
+            )
+            self.assertEqual(issued.status, "active")
+            self.assertEqual(issued.prompt.kind, TURNSTILE_KIND)
+            self.assertTrue(is_challenge_token(issued.prompt.challenge_id))
+            self.assertTrue(
+                issued.prompt.url.endswith("#" + issued.prompt.challenge_id)
+            )
+            self.assertTrue(
+                await bind_challenge_message(42, issued.prompt.challenge_id, 100)
+            )
+
+            active = await get_turnstile_challenge(
+                issued.prompt.challenge_id, now=self.now + timedelta(seconds=1)
+            )
+            self.assertEqual(active.status, "active")
+            failed = await apply_turnstile_attempt(
+                issued.prompt.challenge_id,
+                False,
+                now=self.now + timedelta(seconds=2),
+            )
+            self.assertEqual(failed.status, "failed")
+            self.assertEqual(failed.attempts, 1)
+            passed = await apply_turnstile_attempt(
+                issued.prompt.challenge_id,
+                True,
+                now=self.now + timedelta(seconds=3),
+            )
+            replay = await apply_turnstile_attempt(
+                issued.prompt.challenge_id,
+                True,
+                now=self.now + timedelta(seconds=4),
+            )
+
+        self.assertEqual(passed.status, "passed")
+        self.assertEqual(replay.status, "invalid")
+        async with self.sessions() as session:
+            user = await session.get(User, 42)
+            challenge = await session.get(VerificationChallenge, 42)
+        self.assertTrue(user.is_verified)
+        self.assertIsNone(challenge)
+
+    async def test_choice_callback_cannot_consume_turnstile_challenge(self) -> None:
+        with patch("app.services.verification.AsyncSessionLocal", self.sessions):
+            issued = await issue_challenge(
+                42,
+                42,
+                kind=TURNSTILE_KIND,
+                public_url="https://relaycat.example.com",
+                now=self.now,
+            )
+            await bind_challenge_message(42, issued.prompt.challenge_id, 100)
+            result = await verify_choice(
+                user_id=42,
+                chat_id=42,
+                message_id=100,
+                challenge_id=issued.prompt.challenge_id,
+                choice="anything",
+                now=self.now + timedelta(seconds=3),
+            )
+        self.assertEqual(result.status, "invalid")
 
 
 if __name__ == "__main__":

@@ -42,6 +42,42 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             make_settings(port=70000)
 
+    def test_turnstile_configuration_is_all_or_nothing(self) -> None:
+        with self.assertRaises(ValidationError):
+            make_settings(turnstile_public_url="https://relaycat.example.com")
+
+    def test_turnstile_configuration_accepts_https_and_loopback_http(self) -> None:
+        production = make_settings(
+            turnstile_public_url="https://relaycat.example.com/",
+            turnstile_sitekey="0x4AAAAAA_test",
+            turnstile_verify_url="https://verify.example.workers.dev/siteverify",
+        )
+        self.assertTrue(production.turnstile_configured)
+        self.assertEqual(production.turnstile_hostname, "relaycat.example.com")
+
+        local = make_settings(
+            turnstile_public_url="http://127.0.0.1:8765",
+            turnstile_sitekey="0x4AAAAAA_test",
+            turnstile_verify_url="https://verify.example.workers.dev",
+        )
+        self.assertEqual(local.turnstile_hostname, "127.0.0.1")
+
+    def test_turnstile_configuration_rejects_unsafe_urls(self) -> None:
+        for public_url in (
+            "http://relaycat.example.com",
+            "https://user:pass@relaycat.example.com",
+            "https://relaycat.example.com/verify",
+        ):
+            with (
+                self.subTest(public_url=public_url),
+                self.assertRaises(ValidationError),
+            ):
+                make_settings(
+                    turnstile_public_url=public_url,
+                    turnstile_sitekey="0x4AAAAAA_test",
+                    turnstile_verify_url="https://verify.example.workers.dev",
+                )
+
 
 class RuleTests(unittest.TestCase):
     def test_rejects_invalid_regex(self) -> None:
@@ -172,7 +208,6 @@ class TemplateTests(unittest.TestCase):
             "openai",
             "business",
             "secretary",
-            "httpx",
             "cryptography",
         ):
             self.assertNotIn(removed_term, templates)

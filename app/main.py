@@ -48,18 +48,25 @@ async def lifespan(_: FastAPI):
         logger.warning("Default admin password is active; change it before deployment")
     if settings.secret_key.get_secret_value() == "change-me-before-production":
         logger.warning("Default session secret is active; change it before deployment")
-    try:
-        await setup_bot_commands()
-    except Exception:
-        logger.exception("Could not update Telegram commands; polling will still start")
-    polling_task = asyncio.create_task(run_bot(), name="telegram-polling")
+    polling_task = None
+    if settings.bot_enabled:
+        try:
+            await setup_bot_commands()
+        except Exception:
+            logger.exception(
+                "Could not update Telegram commands; polling will still start"
+            )
+        polling_task = asyncio.create_task(run_bot(), name="telegram-polling")
+    else:
+        logger.warning("Telegram polling is disabled")
     logger.info("RelayCat started on %s:%s", settings.host, settings.port)
     try:
         yield
     finally:
-        polling_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await polling_task
+        if polling_task is not None:
+            polling_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await polling_task
         await bot.session.close()
         await engine.dispose()
         logger.info("RelayCat stopped")
@@ -82,11 +89,12 @@ async def add_security_headers(request: Request, call_next):
         if request.url.path.startswith("/static/")
         else "no-store"
     )
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; base-uri 'none'; form-action 'self'; "
-        "frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; "
-        "style-src 'self'; script-src 'self'; font-src 'self'"
-    )
+    if "Content-Security-Policy" not in response.headers:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; base-uri 'none'; form-action 'self'; "
+            "frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; "
+            "style-src 'self'; script-src 'self'; font-src 'self'"
+        )
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = (

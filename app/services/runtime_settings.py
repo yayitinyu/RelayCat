@@ -20,6 +20,16 @@ async def get_bool_setting(key: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+async def get_choice_setting(
+    key: str,
+    default: str,
+    *,
+    choices: set[str],
+) -> str:
+    value = await get_setting(key)
+    return value if value in choices else default
+
+
 async def get_int_setting(
     key: str,
     default: int,

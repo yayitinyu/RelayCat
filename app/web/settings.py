@@ -1,13 +1,17 @@
 from fastapi import APIRouter, Depends, Request
 
+from app.core.config import settings as app_settings
 from app.database.core import AsyncSessionLocal
 from app.services.protection import add_audit_log, get_protection_policy
 from app.services.runtime_settings import (
     get_bool_setting,
+    get_choice_setting,
     get_int_setting,
     upsert_settings,
 )
 from app.services.verification import CHALLENGE_TTL, LOCKOUT_TIME, MAX_ATTEMPTS
+from app.services.verification import CHOICE_KIND
+from app.services.turnstile import TURNSTILE_KIND
 from app.web.common import (
     redirect_to_login,
     redirect_with_query,
@@ -48,6 +52,12 @@ async def settings_page(request: Request, authenticated: bool = Depends(require_
             verification_attempts=MAX_ATTEMPTS,
             verification_ttl_minutes=int(CHALLENGE_TTL.total_seconds() // 60),
             verification_lock_minutes=int(LOCKOUT_TIME.total_seconds() // 60),
+            verification_method=await get_choice_setting(
+                "verification_method",
+                CHOICE_KIND,
+                choices={CHOICE_KIND, TURNSTILE_KIND},
+            ),
+            turnstile_configured=app_settings.turnstile_configured,
         ),
     )
 
@@ -61,7 +71,16 @@ async def update_settings(
         return redirect_to_login()
     form = await request.form()
     try:
+        verification_method = str(form.get("verification_method") or "")
+        if verification_method not in {CHOICE_KIND, TURNSTILE_KIND}:
+            raise ValueError("请选择有效的人机验证方式")
+        if (
+            verification_method == TURNSTILE_KIND
+            and not app_settings.turnstile_configured
+        ):
+            raise ValueError("Turnstile 尚未配置，不能启用")
         values = {
+            "verification_method": verification_method,
             "confirm_reply": "true" if form.get("confirm_reply") else "false",
             "rate_limit_enabled": (
                 "true" if form.get("rate_limit_enabled") else "false"
@@ -108,6 +127,7 @@ async def update_settings(
             details={
                 "rate_limit_enabled": bool(form.get("rate_limit_enabled")),
                 "auto_ban_enabled": bool(form.get("auto_ban_enabled")),
+                "verification_method": verification_method,
             },
         )
         await session.commit()

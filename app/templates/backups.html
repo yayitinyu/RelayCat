@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-heading compact">
+    <div><h1>备份</h1><p>业务数据库归档，不包含环境变量或密钥。</p></div>
+    <form method="post" action="/backups/create">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="button button-primary" type="submit">创建备份</button>
+    </form>
+</section>
+
+{% if request.query_params.get('saved') %}<div class="notice notice-success" role="status">备份已创建。</div>{% endif %}
+{% if request.query_params.get('restored') %}<div class="notice notice-success" role="status">恢复完成；恢复前快照为 {{ request.query_params.get('rollback') }}。</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="notice notice-error" role="alert">{{ request.query_params.get('error') }}</div>{% endif %}
+
+<section class="panel data-panel" aria-labelledby="backup-list-title">
+    <div class="panel-heading"><h2 id="backup-list-title">备份记录</h2><span class="quiet">{{ backups|length }} 份</span></div>
+    {% if backups %}
+    <div class="table-wrap">
+        <table class="backup-table">
+            <thead><tr><th>创建时间</th><th>类型</th><th>用户</th><th>大小</th><th class="align-right">操作</th></tr></thead>
+            <tbody>
+            {% for backup in backups %}
+                <tr>
+                    <td><strong>{{ backup.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</strong><small>{{ backup.name }}</small></td>
+                    <td>{{ '恢复前' if backup.reason == 'pre-restore' else '手动' }}</td>
+                    <td>{{ backup.counts.get('users', 0) }}</td>
+                    <td>{{ '%.1f'|format(backup.size / 1024) }} KB</td>
+                    <td class="align-right backup-actions">
+                        <a class="table-action" href="/backups/{{ backup.name }}/download">下载</a>
+                        <form method="post" action="/backups/{{ backup.name }}/restore" data-confirm="恢复会覆盖当前数据库；系统会先自动创建恢复前快照。确定继续？">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button class="table-action danger" type="submit">恢复</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<div class="empty-state">尚未创建备份</div>{% endif %}
+</section>
+{% endblock %}

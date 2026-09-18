@@ -86,6 +86,9 @@ def _migrate_existing_tables(sync_connection) -> None:
         "audit_logs": {
             "content_fingerprint": "VARCHAR(64) NULL",
         },
+        "verification_challenges": {
+            "kind": "VARCHAR(16) NOT NULL DEFAULT 'choice'",
+        },
     }
     for table_name, columns in migrations.items():
         if table_name not in inspector.get_table_names():
@@ -110,6 +113,19 @@ def _migrate_existing_tables(sync_connection) -> None:
                 "CREATE INDEX IF NOT EXISTS ix_audit_log_user_fingerprint_time "
                 "ON audit_logs (user_id, content_fingerprint, created_at)"
             )
+        )
+    user_columns = (
+        {column["name"] for column in current_inspector.get_columns("users")}
+        if "users" in current_inspector.get_table_names()
+        else set()
+    )
+    if "created_at" in user_columns:
+        sync_connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_users_created_at ON users (created_at)")
+        )
+    if "updated_at" in user_columns:
+        sync_connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_users_updated_at ON users (updated_at)")
         )
 
 
